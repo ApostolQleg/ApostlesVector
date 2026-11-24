@@ -9,12 +9,13 @@ class Viewer
 {
 private:
 	std::vector<std::unique_ptr<Shape>> shapes;
-	int selectedIndex = -1;
+	std::vector<int> selectedIndices;
 
 	int scrollX = 0;
 	int scrollY = 0;
 	int topOffset = 0;
 
+	void RefreshSelectionFlags();
 	void HandleScroll(HWND hWnd, int barType, WPARAM wParam, int& scrollPos, int pageSize, int maxSize);
 
 public:
@@ -32,11 +33,24 @@ public:
 	void ReplaceShapeAt(int index, std::unique_ptr<Shape> shape);
 	void Clear();
 
+	int HitTestTopShape(long sceneX, long sceneY) const;
 	int SelectAt(long sceneX, long sceneY);
+	int SelectInRect(long x1, long y1, long x2, long y2);
+	void SelectIndex(int index);
+	void SelectLastShape();
 	void ClearSelection();
-	int GetSelectedIndex() const { return selectedIndex; }
+
+	bool IsShapeSelected(int index) const;
+	bool HasSelection() const { return !selectedIndices.empty(); }
+	int GetSelectionCount() const { return static_cast<int>(selectedIndices.size()); }
+	const std::vector<int>& GetSelectedIndices() const { return selectedIndices; }
 	int FindShapeIndex(const Shape* target) const;
-	Shape* GetSelectedShape() const;
+	Shape* GetSingleSelectedShape() const;
+	Shape* GetPrimarySelectedShape() const;
+
+	bool GetSelectionBounds(long& l, long& t, long& r, long& b) const;
+	int HitSelectionHandle(long sx, long sy) const;
+	bool IsPointInSelection(long sx, long sy) const;
 	bool MoveSelectedBy(long dx, long dy);
 
 	int GetCount() const { return static_cast<int>(shapes.size()); }

@@ -43,7 +43,7 @@
 #define IDM_WIDTH_3                     32827
 #define IDM_WIDTH_5                     32828
 #define IDM_SELECT                      32829
-#define IDM_MOVE                        32830
+#define IDM_SELECT_AREA                 32830
 #define IDM_EXPORT_SVG                  32840
 #define IDC_STATIC                      -1
 

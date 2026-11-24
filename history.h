@@ -4,6 +4,12 @@
 
 class Viewer;
 
+struct ShapeSnapshot
+{
+	int index = -1;
+	std::unique_ptr<Shape> state;
+};
+
 class ICommand
 {
 public:
@@ -24,15 +30,14 @@ public:
 	void Undo(Viewer& viewer) override;
 };
 
-class ModifyShapeCommand : public ICommand
+class ModifyShapesCommand : public ICommand
 {
 private:
-	int index = -1;
-	std::unique_ptr<Shape> beforeState;
-	std::unique_ptr<Shape> afterState;
+	std::vector<ShapeSnapshot> beforeStates;
+	std::vector<ShapeSnapshot> afterStates;
 
 public:
-	ModifyShapeCommand(int shapeIndex, std::unique_ptr<Shape> before, std::unique_ptr<Shape> after);
+	ModifyShapesCommand(std::vector<ShapeSnapshot> before, std::vector<ShapeSnapshot> after);
 
 	void Execute(Viewer& viewer) override;
 	void Undo(Viewer& viewer) override;

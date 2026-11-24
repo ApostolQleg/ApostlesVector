@@ -20,6 +20,7 @@ protected:
 
 	bool rubber = false;
 	bool selected = false;
+	bool groupSelected = false;
 
 	HPEN CreateBorderPen() const;
 	HBRUSH CreateFillBrush(bool& createdBrush) const;
@@ -43,10 +44,20 @@ public:
 	int GetHandlePoints(POINT* pts) const;
 	int HitHandle(long sx, long sy) const;
 	void ResizeFrom(const Shape& orig, int handle, long mx, long my);
+	void TransformInBox(const Shape& orig,
+		long oldL, long oldT, long oldR, long oldB,
+		long newL, long newT, long newR, long newB);
+
+	static int GetBoxHandlePoints(long l, long t, long r, long b, POINT* pts);
+	static int HitBoxHandle(long l, long t, long r, long b, long sx, long sy);
+	static void CalcResizedBox(long origL, long origT, long origR, long origB,
+		int handle, long mx, long my,
+		long& newL, long& newT, long& newR, long& newB);
+	static void DrawBoxSelectionFrame(HDC hdc, long l, long t, long r, long b, bool drawHandles);
 
 	void SetStyle(COLORREF border, COLORREF fill, bool borderEnabled, bool filled, int width);
 	void SetRubber(bool r) { rubber = r; }
-	void SetSelected(bool s) { selected = s; }
+	void SetSelected(bool s, bool inGroup = false) { selected = s; groupSelected = inGroup; }
 
 	long GetX1() const { return x1; }
 	long GetY1() const { return y1; }

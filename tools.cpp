@@ -11,7 +11,7 @@ static std::unique_ptr<Shape> MakeShape()
 
 static const ToolDescriptor kTools[] = {
 	{ IDM_SELECT,      0,  L"Select",         nullptr,          nullptr },
-	{ IDM_MOVE,        1,  L"Move",           nullptr,          nullptr },
+	{ IDM_SELECT_AREA, 1,  L"Select Area",    nullptr,          nullptr },
 	{ IDM_NODE,        2,  L"Node",           L"Node",          &MakeShape<Node> },
 	{ IDM_EDGE,        3,  L"Edge",           L"Edge",          &MakeShape<Edge> },
 	{ IDM_LINE,        4,  L"Line",           L"Line",          &MakeShape<Line> },

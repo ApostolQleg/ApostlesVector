@@ -83,6 +83,78 @@ bool Shape::HitTest(long sx, long sy, long tolerance) const
 		sy >= t - tolerance && sy <= b + tolerance);
 }
 
+int Shape::GetBoxHandlePoints(long l, long t, long r, long b, POINT* pts)
+{
+	l -= kSelectionMargin;
+	t -= kSelectionMargin;
+	r += kSelectionMargin;
+	b += kSelectionMargin;
+	const long cx = (l + r) / 2;
+	const long cy = (t + b) / 2;
+
+	// 0 TL, 1 T, 2 TR, 3 R, 4 BR, 5 B, 6 BL, 7 L
+	pts[0] = { l, t };  pts[1] = { cx, t };  pts[2] = { r, t };
+	pts[3] = { r, cy }; pts[4] = { r, b };   pts[5] = { cx, b };
+	pts[6] = { l, b };  pts[7] = { l, cy };
+	return 8;
+}
+
+int Shape::HitBoxHandle(long l, long t, long r, long b, long sx, long sy)
+{
+	POINT pts[8] = {};
+	const int n = GetBoxHandlePoints(l, t, r, b, pts);
+	for (int i = n - 1; i >= 0; --i)
+	{
+		if (labs(sx - pts[i].x) <= kHandleSize + 2 && labs(sy - pts[i].y) <= kHandleSize + 2)
+			return i;
+	}
+	return -1;
+}
+
+void Shape::CalcResizedBox(long origL, long origT, long origR, long origB,
+	int handle, long mx, long my,
+	long& newL, long& newT, long& newR, long& newB)
+{
+	const bool moveLeft = (handle == 0 || handle == 6 || handle == 7);
+	const bool moveRight = (handle == 2 || handle == 3 || handle == 4);
+	const bool moveTop = (handle == 0 || handle == 1 || handle == 2);
+	const bool moveBottom = (handle == 4 || handle == 5 || handle == 6);
+
+	newL = origL;
+	newT = origT;
+	newR = origR;
+	newB = origB;
+
+	if (moveLeft)   newL = mx + kSelectionMargin;
+	if (moveRight)  newR = mx - kSelectionMargin;
+	if (moveTop)    newT = my + kSelectionMargin;
+	if (moveBottom) newB = my - kSelectionMargin;
+
+	if (newR - newL < kMinShapeSize)
+	{
+		if (moveLeft) newL = newR - kMinShapeSize;
+		else newR = newL + kMinShapeSize;
+	}
+	if (newB - newT < kMinShapeSize)
+	{
+		if (moveTop) newT = newB - kMinShapeSize;
+		else newB = newT + kMinShapeSize;
+	}
+}
+
+void Shape::TransformInBox(const Shape& orig,
+	long oldL, long oldT, long oldR, long oldB,
+	long newL, long newT, long newR, long newB)
+{
+	const double sx = (oldR > oldL) ? static_cast<double>(newR - newL) / (oldR - oldL) : 1.0;
+	const double sy = (oldB > oldT) ? static_cast<double>(newB - newT) / (oldB - oldT) : 1.0;
+
+	x1 = newL + std::lround((orig.x1 - oldL) * sx);
+	y1 = newT + std::lround((orig.y1 - oldT) * sy);
+	x2 = newL + std::lround((orig.x2 - oldL) * sx);
+	y2 = newT + std::lround((orig.y2 - oldT) * sy);
+}
+
 int Shape::GetHandlePoints(POINT* pts) const
 {
 	switch (GetResizeMode())
@@ -96,18 +168,7 @@ int Shape::GetHandlePoints(POINT* pts) const
 	{
 		long l, t, r, b;
 		GetBounds(l, t, r, b);
-		l -= kSelectionMargin;
-		t -= kSelectionMargin;
-		r += kSelectionMargin;
-		b += kSelectionMargin;
-		const long cx = (l + r) / 2;
-		const long cy = (t + b) / 2;
-
-		// 0 TL, 1 T, 2 TR, 3 R, 4 BR, 5 B, 6 BL, 7 L
-		pts[0] = { l, t };  pts[1] = { cx, t };  pts[2] = { r, t };
-		pts[3] = { r, cy }; pts[4] = { r, b };   pts[5] = { cx, b };
-		pts[6] = { l, b };  pts[7] = { l, cy };
-		return 8;
+		return GetBoxHandlePoints(l, t, r, b, pts);
 	}
 
 	default:
@@ -145,35 +206,9 @@ void Shape::ResizeFrom(const Shape& orig, int handle, long mx, long my)
 		long l, t, r, b;
 		orig.GetBounds(l, t, r, b);
 
-		const bool moveLeft = (handle == 0 || handle == 6 || handle == 7);
-		const bool moveRight = (handle == 2 || handle == 3 || handle == 4);
-		const bool moveTop = (handle == 0 || handle == 1 || handle == 2);
-		const bool moveBottom = (handle == 4 || handle == 5 || handle == 6);
-
-		long nl = l, nt = t, nr = r, nb = b;
-		if (moveLeft)   nl = mx + kSelectionMargin;
-		if (moveRight)  nr = mx - kSelectionMargin;
-		if (moveTop)    nt = my + kSelectionMargin;
-		if (moveBottom) nb = my - kSelectionMargin;
-
-		if (nr - nl < kMinShapeSize)
-		{
-			if (moveLeft) nl = nr - kMinShapeSize;
-			else nr = nl + kMinShapeSize;
-		}
-		if (nb - nt < kMinShapeSize)
-		{
-			if (moveTop) nt = nb - kMinShapeSize;
-			else nb = nt + kMinShapeSize;
-		}
-
-		const double sx = (r > l) ? static_cast<double>(nr - nl) / (r - l) : 1.0;
-		const double sy = (b > t) ? static_cast<double>(nb - nt) / (b - t) : 1.0;
-
-		x1 = nl + std::lround((orig.x1 - l) * sx);
-		y1 = nt + std::lround((orig.y1 - t) * sy);
-		x2 = nl + std::lround((orig.x2 - l) * sx);
-		y2 = nt + std::lround((orig.y2 - t) * sy);
+		long nl, nt, nr, nb;
+		CalcResizedBox(l, t, r, b, handle, mx, my, nl, nt, nr, nb);
+		TransformInBox(orig, l, t, r, b, nl, nt, nr, nb);
 		break;
 	}
 
@@ -270,12 +305,48 @@ void Shape::DrawEllipsePrimitive(HDC hdc, long ax, long ay, long bx, long by, bo
 	if (rubber || hasBorder) DeleteObject(hPen);
 }
 
+void Shape::DrawBoxSelectionFrame(HDC hdc, long l, long t, long r, long b, bool drawHandles)
+{
+	HPEN hSelPen = CreatePen(PS_DASH, 1, RGB(0, 120, 215));
+	HPEN hOldPen = static_cast<HPEN>(SelectObject(hdc, hSelPen));
+	HBRUSH hOldBrush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
+
+	Rectangle(hdc, l - kSelectionMargin, t - kSelectionMargin,
+		r + kSelectionMargin, b + kSelectionMargin);
+
+	if (drawHandles)
+	{
+		POINT pts[8] = {};
+		const int n = GetBoxHandlePoints(l, t, r, b, pts);
+		HPEN hHandlePen = CreatePen(PS_SOLID, 1, RGB(0, 120, 215));
+		SelectObject(hdc, hHandlePen);
+		SelectObject(hdc, GetStockObject(WHITE_BRUSH));
+		for (int i = 0; i < n; ++i)
+		{
+			Rectangle(hdc, pts[i].x - kHandleSize, pts[i].y - kHandleSize,
+				pts[i].x + kHandleSize + 1, pts[i].y + kHandleSize + 1);
+		}
+		SelectObject(hdc, hSelPen);
+		DeleteObject(hHandlePen);
+	}
+
+	SelectObject(hdc, hOldBrush);
+	SelectObject(hdc, hOldPen);
+	DeleteObject(hSelPen);
+}
+
 void Shape::DrawSelection(HDC hdc) const
 {
 	if (!selected || rubber) return;
 
 	long l, t, r, b;
 	GetBounds(l, t, r, b);
+
+	if (groupSelected)
+	{
+		DrawBoxSelectionFrame(hdc, l, t, r, b, false);
+		return;
+	}
 
 	HPEN hSelPen = CreatePen(PS_DASH, 1, RGB(0, 120, 215));
 	HPEN hOldPen = static_cast<HPEN>(SelectObject(hdc, hSelPen));

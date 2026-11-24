@@ -1,6 +1,23 @@
 #include "pch.h"
 #include "framework.h"
 #include "viewer.h"
+#include <algorithm>
+
+void Viewer::RefreshSelectionFlags()
+{
+	for (auto& shape : shapes)
+	{
+		if (shape)
+			shape->SetSelected(false, false);
+	}
+
+	const bool isGroup = (selectedIndices.size() > 1);
+	for (int idx : selectedIndices)
+	{
+		if (idx >= 0 && idx < static_cast<int>(shapes.size()) && shapes[idx])
+			shapes[idx]->SetSelected(true, isGroup);
+	}
+}
 
 void Viewer::AddShape(std::unique_ptr<Shape> shape)
 {
@@ -12,11 +29,12 @@ std::unique_ptr<Shape> Viewer::RemoveLastShape()
 {
 	if (shapes.empty()) return nullptr;
 
+	const int lastIdx = static_cast<int>(shapes.size()) - 1;
 	auto last = std::move(shapes.back());
 	shapes.pop_back();
 
-	if (selectedIndex >= static_cast<int>(shapes.size()))
-		selectedIndex = -1;
+	std::erase(selectedIndices, lastIdx);
+	RefreshSelectionFlags();
 
 	return last;
 }
@@ -26,25 +44,86 @@ void Viewer::ReplaceShapeAt(int index, std::unique_ptr<Shape> shape)
 	if (!shape || index < 0 || index >= static_cast<int>(shapes.size()))
 		return;
 
-	ClearSelection();
-	shape->SetSelected(false);
+	shape->SetSelected(false, false);
 	shapes[index] = std::move(shape);
 }
 
 void Viewer::Clear()
 {
 	shapes.clear();
-	selectedIndex = -1;
+	selectedIndices.clear();
 }
 
 void Viewer::ClearSelection()
 {
-	for (auto& shape : shapes)
+	selectedIndices.clear();
+	RefreshSelectionFlags();
+}
+
+bool Viewer::IsShapeSelected(int index) const
+{
+	return std::find(selectedIndices.begin(), selectedIndices.end(), index) != selectedIndices.end();
+}
+
+void Viewer::SelectIndex(int index)
+{
+	selectedIndices.clear();
+	if (index >= 0 && index < static_cast<int>(shapes.size()))
+		selectedIndices.push_back(index);
+	RefreshSelectionFlags();
+}
+
+void Viewer::SelectLastShape()
+{
+	if (!shapes.empty())
+		SelectIndex(static_cast<int>(shapes.size()) - 1);
+}
+
+int Viewer::HitTestTopShape(long sceneX, long sceneY) const
+{
+	for (int i = static_cast<int>(shapes.size()) - 1; i >= 0; --i)
 	{
-		if (shape)
-			shape->SetSelected(false);
+		if (shapes[i] && shapes[i]->HitTest(sceneX, sceneY))
+			return i;
 	}
-	selectedIndex = -1;
+	return -1;
+}
+
+int Viewer::SelectAt(long sceneX, long sceneY)
+{
+	const int hit = HitTestTopShape(sceneX, sceneY);
+	if (hit >= 0)
+	{
+		SelectIndex(hit);
+		return hit;
+	}
+
+	ClearSelection();
+	return -1;
+}
+
+int Viewer::SelectInRect(long x1, long y1, long x2, long y2)
+{
+	const long l = (x1 < x2) ? x1 : x2;
+	const long r = (x1 < x2) ? x2 : x1;
+	const long t = (y1 < y2) ? y1 : y2;
+	const long b = (y1 < y2) ? y2 : y1;
+
+	selectedIndices.clear();
+	for (int i = 0; i < static_cast<int>(shapes.size()); ++i)
+	{
+		if (!shapes[i]) continue;
+
+		long sl, st, sr, sb;
+		shapes[i]->GetBounds(sl, st, sr, sb);
+
+		const bool intersects = !(sr < l || sl > r || sb < t || st > b);
+		if (intersects)
+			selectedIndices.push_back(i);
+	}
+
+	RefreshSelectionFlags();
+	return static_cast<int>(selectedIndices.size());
 }
 
 int Viewer::FindShapeIndex(const Shape* target) const
@@ -58,36 +137,96 @@ int Viewer::FindShapeIndex(const Shape* target) const
 	return -1;
 }
 
-int Viewer::SelectAt(long sceneX, long sceneY)
+Shape* Viewer::GetSingleSelectedShape() const
 {
-	ClearSelection();
+	if (selectedIndices.size() == 1)
+		return GetShape(selectedIndices[0]);
+	return nullptr;
+}
 
-	// Перевіряємо з останньої (верхньої) фігури
-	for (int i = static_cast<int>(shapes.size()) - 1; i >= 0; --i)
+Shape* Viewer::GetPrimarySelectedShape() const
+{
+	if (!selectedIndices.empty())
+		return GetShape(selectedIndices[0]);
+	return nullptr;
+}
+
+bool Viewer::GetSelectionBounds(long& l, long& t, long& r, long& b) const
+{
+	bool hasAny = false;
+	for (int idx : selectedIndices)
 	{
-		if (shapes[i] && shapes[i]->HitTest(sceneX, sceneY))
+		const Shape* shape = GetShape(idx);
+		if (!shape) continue;
+
+		long sl, st, sr, sb;
+		shape->GetBounds(sl, st, sr, sb);
+		if (!hasAny)
 		{
-			shapes[i]->SetSelected(true);
-			selectedIndex = i;
-			return i;
+			l = sl; t = st; r = sr; b = sb;
+			hasAny = true;
+		}
+		else
+		{
+			if (sl < l) l = sl;
+			if (st < t) t = st;
+			if (sr > r) r = sr;
+			if (sb > b) b = sb;
+		}
+	}
+	return hasAny;
+}
+
+int Viewer::HitSelectionHandle(long sx, long sy) const
+{
+	if (selectedIndices.empty())
+		return -1;
+
+	if (selectedIndices.size() == 1)
+	{
+		const Shape* sel = GetShape(selectedIndices[0]);
+		return sel ? sel->HitHandle(sx, sy) : -1;
+	}
+
+	long l, t, r, b;
+	if (!GetSelectionBounds(l, t, r, b))
+		return -1;
+
+	return Shape::HitBoxHandle(l, t, r, b, sx, sy);
+}
+
+bool Viewer::IsPointInSelection(long sx, long sy) const
+{
+	if (selectedIndices.empty())
+		return false;
+
+	const int hit = HitTestTopShape(sx, sy);
+	if (hit >= 0 && IsShapeSelected(hit))
+		return true;
+
+	if (selectedIndices.size() > 1)
+	{
+		long l, t, r, b;
+		if (GetSelectionBounds(l, t, r, b))
+		{
+			return (sx >= l - kSelectionMargin && sx <= r + kSelectionMargin &&
+				sy >= t - kSelectionMargin && sy <= b + kSelectionMargin);
 		}
 	}
 
-	return -1;
-}
-
-Shape* Viewer::GetSelectedShape() const
-{
-	return GetShape(selectedIndex);
+	return false;
 }
 
 bool Viewer::MoveSelectedBy(long dx, long dy)
 {
-	Shape* sel = GetSelectedShape();
-	if (!sel || (dx == 0 && dy == 0))
+	if (selectedIndices.empty() || (dx == 0 && dy == 0))
 		return false;
 
-	sel->MoveBy(dx, dy);
+	for (int idx : selectedIndices)
+	{
+		if (Shape* shape = GetShape(idx))
+			shape->MoveBy(dx, dy);
+	}
 	return true;
 }
 
@@ -302,6 +441,13 @@ void Viewer::Render(HWND hWnd) const
 		{
 			if (shape)
 				shape->Show(memDC);
+		}
+
+		if (selectedIndices.size() > 1)
+		{
+			long gl, gt, gr, gb;
+			if (GetSelectionBounds(gl, gt, gr, gb))
+				Shape::DrawBoxSelectionFrame(memDC, gl, gt, gr, gb, true);
 		}
 
 		SetViewportOrgEx(memDC, 0, 0, nullptr);

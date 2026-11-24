@@ -22,24 +22,31 @@ void AddShapeCommand::Undo(Viewer& viewer)
 		shape->SetSelected(false);
 }
 
-ModifyShapeCommand::ModifyShapeCommand(int shapeIndex,
-	std::unique_ptr<Shape> before, std::unique_ptr<Shape> after)
-	: index(shapeIndex)
-	, beforeState(std::move(before))
-	, afterState(std::move(after))
+ModifyShapesCommand::ModifyShapesCommand(std::vector<ShapeSnapshot> before,
+	std::vector<ShapeSnapshot> after)
+	: beforeStates(std::move(before))
+	, afterStates(std::move(after))
 {
 }
 
-void ModifyShapeCommand::Execute(Viewer& viewer)
+void ModifyShapesCommand::Execute(Viewer& viewer)
 {
-	if (afterState)
-		viewer.ReplaceShapeAt(index, afterState->Clone());
+	viewer.ClearSelection();
+	for (const auto& item : afterStates)
+	{
+		if (item.state)
+			viewer.ReplaceShapeAt(item.index, item.state->Clone());
+	}
 }
 
-void ModifyShapeCommand::Undo(Viewer& viewer)
+void ModifyShapesCommand::Undo(Viewer& viewer)
 {
-	if (beforeState)
-		viewer.ReplaceShapeAt(index, beforeState->Clone());
+	viewer.ClearSelection();
+	for (const auto& item : beforeStates)
+	{
+		if (item.state)
+			viewer.ReplaceShapeAt(item.index, item.state->Clone());
+	}
 }
 
 void CommandHistory::Execute(std::unique_ptr<ICommand> cmd, Viewer& viewer)

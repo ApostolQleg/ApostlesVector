@@ -29,15 +29,18 @@ private:
 	UINT currentToolId = 0;
 
 	bool isDrawing = false;
+	bool isSelectingArea = false;
 	bool rubberDrawn = false;
 	bool isMoving = false;
 	bool isResizing = false;
 	bool changedDuringDrag = false;
 	int resizeHandle = -1;
-	std::unique_ptr<Shape> dragOrigState;
+	RECT dragOrigBounds = {};
+	std::vector<ShapeSnapshot> dragOrigStates;
 
 	long xStart = 0, yStart = 0;
 	long lastMoveX = 0, lastMoveY = 0;
+	long rubberEndX = 0, rubberEndY = 0;
 
 	COLORREF borderColor = RGB(0, 0, 0);
 	COLORREF fillColor = RGB(255, 255, 255);
@@ -51,6 +54,10 @@ private:
 	void StartTool(std::unique_ptr<Shape> shape, UINT cmdId);
 	void SelectTool(UINT cmdId);
 	void FinishTextEdit(HWND hWnd, bool commit);
+
+	std::vector<ShapeSnapshot> CaptureSelectedSnapshots() const;
+	void BeginResizeDrag(HWND hWnd, int handle);
+	void BeginMoveDrag(HWND hWnd, long sx, long sy);
 
 	template <typename MutateFn>
 	void ApplyStyleChange(HWND hWnd, MutateFn mutate);

@@ -19,7 +19,7 @@ static LRESULT CALLBACK InplaceEditProc(HWND hEdit, UINT msg, WPARAM wParam, LPA
 			PostMessageW(GetParent(hEdit), WM_COMMAND, MAKEWPARAM(kCmdTextCancel, 0), 0);
 			return 0;
 		}
-		if (wParam == VK_RETURN && (GetKeyState(VK_CONTROL) & 0x8000))
+		if (wParam == VK_RETURN && !(GetKeyState(VK_SHIFT) & 0x8000))
 		{
 			PostMessageW(GetParent(hEdit), WM_COMMAND, MAKEWPARAM(kCmdTextCommit, 0), 0);
 			return 0;
@@ -28,6 +28,8 @@ static LRESULT CALLBACK InplaceEditProc(HWND hEdit, UINT msg, WPARAM wParam, LPA
 
 	case WM_CHAR:
 		if (wParam == VK_ESCAPE || wParam == L'\n')
+			return 0;
+		if (wParam == L'\r' && !(GetKeyState(VK_SHIFT) & 0x8000))
 			return 0;
 		break;
 
@@ -66,6 +68,7 @@ void InplaceTextEditor::Begin(HWND hParent, const Viewer& viewer, Text* target,
 		DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
 		CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
 
+	// У фігурі переноси зберігаються як '\n', а елемент EDIT потребує "\r\n"
 	std::wstring initial;
 	if (target)
 	{

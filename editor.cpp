@@ -14,6 +14,57 @@ Editor* Editor::GetInstance()
 	return instance;
 }
 
+static void DrawSelectionMarquee(HDC hdc, long x1, long y1, long x2, long y2)
+{
+	HPEN hPen = CreatePen(PS_DOT, 1, RGB(0, 120, 215));
+	HPEN hOldPen = static_cast<HPEN>(SelectObject(hdc, hPen));
+	HBRUSH hOldBrush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
+
+	Rectangle(hdc, x1, y1, x2, y2);
+
+	SelectObject(hdc, hOldBrush);
+	SelectObject(hdc, hOldPen);
+	DeleteObject(hPen);
+}
+
+std::vector<ShapeSnapshot> Editor::CaptureSelectedSnapshots() const
+{
+	std::vector<ShapeSnapshot> snapshots;
+	for (int idx : viewer.GetSelectedIndices())
+	{
+		if (const Shape* shape = viewer.GetShape(idx))
+		{
+			snapshots.push_back({ idx, shape->Clone() });
+		}
+	}
+	return snapshots;
+}
+
+void Editor::BeginResizeDrag(HWND hWnd, int handle)
+{
+	dragOrigStates = CaptureSelectedSnapshots();
+	if (dragOrigStates.empty()) return;
+
+	viewer.GetSelectionBounds(dragOrigBounds.left, dragOrigBounds.top,
+		dragOrigBounds.right, dragOrigBounds.bottom);
+	resizeHandle = handle;
+	isResizing = true;
+	changedDuringDrag = false;
+	SetCapture(hWnd);
+}
+
+void Editor::BeginMoveDrag(HWND hWnd, long sx, long sy)
+{
+	dragOrigStates = CaptureSelectedSnapshots();
+	if (dragOrigStates.empty()) return;
+
+	isMoving = true;
+	changedDuringDrag = false;
+	lastMoveX = sx;
+	lastMoveY = sy;
+	SetCapture(hWnd);
+}
+
 void Editor::FinishTextEdit(HWND hWnd, bool commit)
 {
 	TextEditResult result = textEditor.End(hWnd, commit);
@@ -24,10 +75,18 @@ void Editor::FinishTextEdit(HWND hWnd, bool commit)
 			if (result.text != result.target->GetText())
 			{
 				const int idx = viewer.FindShapeIndex(result.target);
-				auto before = result.target->Clone();
-				result.target->SetText(result.text);
+				std::vector<ShapeSnapshot> before;
+				std::vector<ShapeSnapshot> after;
 				if (idx >= 0)
-					history.PushExecuted(std::make_unique<ModifyShapeCommand>(idx, std::move(before), result.target->Clone()));
+					before.push_back({ idx, result.target->Clone() });
+
+				result.target->SetText(result.text);
+
+				if (idx >= 0)
+				{
+					after.push_back({ idx, result.target->Clone() });
+					history.PushExecuted(std::make_unique<ModifyShapesCommand>(std::move(before), std::move(after)));
+				}
 				files.MarkDirty(hWnd);
 			}
 		}
@@ -41,6 +100,9 @@ void Editor::FinishTextEdit(HWND hWnd, bool commit)
 
 			history.Execute(std::make_unique<AddShapeCommand>(std::move(newText)), viewer);
 			files.MarkDirty(hWnd);
+
+			SelectTool(IDM_SELECT);
+			viewer.SelectLastShape();
 		}
 	}
 
@@ -63,16 +125,17 @@ void Editor::ApplyCurrentStyle(Shape* shape) const
 void Editor::StartTool(std::unique_ptr<Shape> shape, UINT cmdId)
 {
 	currentShape = std::move(shape);
-	dragOrigState.reset();
+	dragOrigStates.clear();
 	currentToolId = cmdId;
 	isDrawing = false;
+	isSelectingArea = false;
 	rubberDrawn = false;
 	isMoving = false;
 	isResizing = false;
 	changedDuringDrag = false;
 	resizeHandle = -1;
 
-	if (cmdId != IDM_SELECT && cmdId != IDM_MOVE)
+	if (cmdId != IDM_SELECT && cmdId != IDM_SELECT_AREA)
 	{
 		viewer.ClearSelection();
 	}
@@ -89,13 +152,16 @@ void Editor::SelectTool(UINT cmdId)
 template <typename MutateFn>
 void Editor::ApplyStyleChange(HWND hWnd, MutateFn mutate)
 {
-	Shape* sel = viewer.GetSelectedShape();
-	if (sel)
+	if (viewer.HasSelection())
 	{
-		auto before = sel->Clone();
-		mutate(sel);
-		history.PushExecuted(std::make_unique<ModifyShapeCommand>(
-			viewer.GetSelectedIndex(), std::move(before), sel->Clone()));
+		auto before = CaptureSelectedSnapshots();
+		for (int idx : viewer.GetSelectedIndices())
+		{
+			if (Shape* shape = viewer.GetShape(idx))
+				mutate(shape);
+		}
+		auto after = CaptureSelectedSnapshots();
+		history.PushExecuted(std::make_unique<ModifyShapesCommand>(std::move(before), std::move(after)));
 		files.MarkDirty(hWnd);
 		viewer.InvalidateCanvas(hWnd);
 	}
@@ -104,13 +170,13 @@ void Editor::ApplyStyleChange(HWND hWnd, MutateFn mutate)
 
 void Editor::ChooseBorderColor(HWND hWnd)
 {
-	Shape* sel = viewer.GetSelectedShape();
+	const Shape* primary = viewer.GetPrimarySelectedShape();
 
 	CHOOSECOLORW cc = {};
 	cc.lStructSize = sizeof(CHOOSECOLORW);
 	cc.hwndOwner = hWnd;
 	cc.lpCustColors = customColors;
-	cc.rgbResult = sel ? sel->GetBorderColor() : borderColor;
+	cc.rgbResult = primary ? primary->GetBorderColor() : borderColor;
 	cc.Flags = CC_FULLOPEN | CC_RGBINIT;
 
 	if (ChooseColorW(&cc))
@@ -125,13 +191,13 @@ void Editor::ChooseBorderColor(HWND hWnd)
 
 void Editor::ChooseFillColor(HWND hWnd)
 {
-	Shape* sel = viewer.GetSelectedShape();
+	const Shape* primary = viewer.GetPrimarySelectedShape();
 
 	CHOOSECOLORW cc = {};
 	cc.lStructSize = sizeof(CHOOSECOLORW);
 	cc.hwndOwner = hWnd;
 	cc.lpCustColors = customColors;
-	cc.rgbResult = sel ? sel->GetFillColor() : fillColor;
+	cc.rgbResult = primary ? primary->GetFillColor() : fillColor;
 	cc.Flags = CC_FULLOPEN | CC_RGBINIT;
 
 	if (ChooseColorW(&cc))
@@ -146,8 +212,8 @@ void Editor::ChooseFillColor(HWND hWnd)
 
 void Editor::ToggleNoBorder(HWND hWnd)
 {
-	Shape* sel = viewer.GetSelectedShape();
-	hasBorder = sel ? !sel->HasBorder() : !hasBorder;
+	const Shape* primary = viewer.GetPrimarySelectedShape();
+	hasBorder = primary ? !primary->HasBorder() : !hasBorder;
 	ApplyStyleChange(hWnd, [this](Shape* s) {
 		s->SetStyle(s->GetBorderColor(), s->GetFillColor(), hasBorder, s->IsFilled(), s->GetBorderWidth());
 		});
@@ -155,8 +221,8 @@ void Editor::ToggleNoBorder(HWND hWnd)
 
 void Editor::ToggleNoFill(HWND hWnd)
 {
-	Shape* sel = viewer.GetSelectedShape();
-	hasFill = sel ? !sel->IsFilled() : !hasFill;
+	const Shape* primary = viewer.GetPrimarySelectedShape();
+	hasFill = primary ? !primary->IsFilled() : !hasFill;
 	ApplyStyleChange(hWnd, [this](Shape* s) {
 		s->SetStyle(s->GetBorderColor(), s->GetFillColor(), s->HasBorder(), hasFill, s->GetBorderWidth());
 		});
@@ -181,7 +247,7 @@ void Editor::OnCreate(HWND hWnd)
 
 	files.UpdateWindowTitle(hWnd);
 
-	SelectTool(IDM_LINE);
+	SelectTool(IDM_SELECT);
 }
 
 void Editor::OnSize(HWND hWnd)
@@ -237,36 +303,56 @@ void Editor::OnLBDown(HWND hWnd, LPARAM lParam)
 
 	if (currentToolId == IDM_SELECT)
 	{
-		if (Shape* sel = viewer.GetSelectedShape())
+		const int handle = viewer.HitSelectionHandle(sx, sy);
+		if (handle >= 0)
 		{
-			const int handle = sel->HitHandle(sx, sy);
-			if (handle >= 0)
-			{
-				dragOrigState = sel->Clone();
-				resizeHandle = handle;
-				isResizing = true;
-				changedDuringDrag = false;
-				SetCapture(hWnd);
-				return;
-			}
+			BeginResizeDrag(hWnd, handle);
+			return;
 		}
-		viewer.SelectAt(sx, sy);
+
+		const int hit = viewer.HitTestTopShape(sx, sy);
+		if (hit >= 0)
+		{
+			if (!viewer.IsShapeSelected(hit))
+				viewer.SelectIndex(hit);
+
+			BeginMoveDrag(hWnd, sx, sy);
+			viewer.InvalidateCanvas(hWnd);
+			return;
+		}
+
+		if (viewer.GetSelectionCount() > 1 && viewer.IsPointInSelection(sx, sy))
+		{
+			BeginMoveDrag(hWnd, sx, sy);
+			return;
+		}
+
+		viewer.ClearSelection();
 		viewer.InvalidateCanvas(hWnd);
 		return;
 	}
 
-	if (currentToolId == IDM_MOVE)
+	if (currentToolId == IDM_SELECT_AREA)
 	{
-		const int hit = viewer.SelectAt(sx, sy);
-		if (hit >= 0)
+		const int handle = viewer.HitSelectionHandle(sx, sy);
+		if (handle >= 0)
 		{
-			dragOrigState = viewer.GetSelectedShape()->Clone();
-			isMoving = true;
-			changedDuringDrag = false;
-			lastMoveX = sx;
-			lastMoveY = sy;
-			SetCapture(hWnd);
+			BeginResizeDrag(hWnd, handle);
+			return;
 		}
+
+		if (viewer.IsPointInSelection(sx, sy))
+		{
+			BeginMoveDrag(hWnd, sx, sy);
+			return;
+		}
+
+		viewer.ClearSelection();
+		isSelectingArea = true;
+		rubberDrawn = false;
+		xStart = rubberEndX = sx;
+		yStart = rubberEndY = sy;
+		SetCapture(hWnd);
 		viewer.InvalidateCanvas(hWnd);
 		return;
 	}
@@ -287,7 +373,7 @@ void Editor::OnLBDown(HWND hWnd, LPARAM lParam)
 void Editor::OnLBDblClk(HWND hWnd)
 {
 	if (currentToolId != IDM_SELECT) return;
-	Text* textShape = dynamic_cast<Text*>(viewer.GetSelectedShape());
+	Text* textShape = dynamic_cast<Text*>(viewer.GetSingleSelectedShape());
 	if (!textShape) return;
 
 	long l, t, r, b;
@@ -301,14 +387,35 @@ void Editor::OnMouseMove(HWND hWnd, LPARAM lParam)
 	{
 		long sx = 0, sy = 0;
 		GetSceneMousePos(lParam, sx, sy);
-		if (Shape* sel = viewer.GetSelectedShape())
+
+		if (dragOrigStates.size() == 1)
 		{
-			if (dragOrigState)
+			if (Shape* sel = viewer.GetShape(dragOrigStates[0].index))
 			{
-				sel->ResizeFrom(*dragOrigState, resizeHandle, sx, sy);
+				sel->ResizeFrom(*dragOrigStates[0].state, resizeHandle, sx, sy);
 				changedDuringDrag = true;
 				viewer.InvalidateCanvas(hWnd);
 			}
+		}
+		else if (dragOrigStates.size() > 1)
+		{
+			long newL, newT, newR, newB;
+			Shape::CalcResizedBox(dragOrigBounds.left, dragOrigBounds.top,
+				dragOrigBounds.right, dragOrigBounds.bottom,
+				resizeHandle, sx, sy, newL, newT, newR, newB);
+
+			for (const auto& item : dragOrigStates)
+			{
+				if (Shape* shape = viewer.GetShape(item.index))
+				{
+					shape->TransformInBox(*item.state,
+						dragOrigBounds.left, dragOrigBounds.top,
+						dragOrigBounds.right, dragOrigBounds.bottom,
+						newL, newT, newR, newB);
+				}
+			}
+			changedDuringDrag = true;
+			viewer.InvalidateCanvas(hWnd);
 		}
 		return;
 	}
@@ -327,6 +434,24 @@ void Editor::OnMouseMove(HWND hWnd, LPARAM lParam)
 			changedDuringDrag = true;
 			viewer.InvalidateCanvas(hWnd);
 		}
+		return;
+	}
+
+	if (isSelectingArea)
+	{
+		HDC hdc = GetDC(hWnd);
+		viewer.BeginCanvasDraw(hdc, hWnd);
+		SetROP2(hdc, R2_NOTXORPEN);
+		SetBkMode(hdc, TRANSPARENT);
+
+		if (rubberDrawn)
+			DrawSelectionMarquee(hdc, xStart, yStart, rubberEndX, rubberEndY);
+
+		GetSceneMousePos(lParam, rubberEndX, rubberEndY);
+		DrawSelectionMarquee(hdc, xStart, yStart, rubberEndX, rubberEndY);
+
+		rubberDrawn = true;
+		ReleaseDC(hWnd, hdc);
 		return;
 	}
 
@@ -362,17 +487,33 @@ void Editor::OnLBUp(HWND hWnd, LPARAM lParam)
 		isMoving = false;
 		ReleaseCapture();
 
-		if (changedDuringDrag && dragOrigState)
+		if (changedDuringDrag && !dragOrigStates.empty())
 		{
-			if (const Shape* sel = viewer.GetSelectedShape())
-			{
-				history.PushExecuted(std::make_unique<ModifyShapeCommand>(
-					viewer.GetSelectedIndex(), std::move(dragOrigState), sel->Clone()));
-				files.MarkDirty(hWnd);
-			}
+			auto after = CaptureSelectedSnapshots();
+			history.PushExecuted(std::make_unique<ModifyShapesCommand>(
+				std::move(dragOrigStates), std::move(after)));
+			files.MarkDirty(hWnd);
 			changedDuringDrag = false;
 		}
-		dragOrigState.reset();
+		dragOrigStates.clear();
+		viewer.InvalidateCanvas(hWnd);
+		return;
+	}
+
+	if (isSelectingArea)
+	{
+		isSelectingArea = false;
+		rubberDrawn = false;
+		ReleaseCapture();
+
+		long x = 0, y = 0;
+		GetSceneMousePos(lParam, x, y);
+
+		if (labs(x - xStart) < 3 && labs(y - yStart) < 3)
+			viewer.SelectAt(x, y);
+		else
+			viewer.SelectInRect(xStart, yStart, x, y);
+
 		viewer.InvalidateCanvas(hWnd);
 		return;
 	}
@@ -408,11 +549,11 @@ void Editor::OnLBUp(HWND hWnd, LPARAM lParam)
 		return;
 	}
 
-	auto next = currentShape->Clone();
 	history.Execute(std::make_unique<AddShapeCommand>(std::move(currentShape)), viewer);
 	files.MarkDirty(hWnd);
-	currentShape = std::move(next);
 
+	SelectTool(IDM_SELECT);
+	viewer.SelectLastShape();
 	viewer.InvalidateCanvas(hWnd);
 }
 
@@ -433,10 +574,10 @@ void Editor::OnInitMenuPopup(HWND hWnd)
 			MF_BYCOMMAND | ((tool.cmdId == currentToolId) ? MF_CHECKED : MF_UNCHECKED));
 	}
 
-	const Shape* sel = viewer.GetSelectedShape();
-	const bool curHasBorder = sel ? sel->HasBorder() : hasBorder;
-	const bool curHasFill = sel ? sel->IsFilled() : hasFill;
-	const int curWidth = sel ? sel->GetBorderWidth() : borderWidth;
+	const Shape* primary = viewer.GetPrimarySelectedShape();
+	const bool curHasBorder = primary ? primary->HasBorder() : hasBorder;
+	const bool curHasFill = primary ? primary->IsFilled() : hasFill;
+	const int curWidth = primary ? primary->GetBorderWidth() : borderWidth;
 
 	CheckMenuItem(hMenu, IDM_NO_BORDER, MF_BYCOMMAND | ((!curHasBorder) ? MF_CHECKED : MF_UNCHECKED));
 	CheckMenuItem(hMenu, IDM_NO_COLOR, MF_BYCOMMAND | ((!curHasFill) ? MF_CHECKED : MF_UNCHECKED));
