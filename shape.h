@@ -27,6 +27,7 @@ public:
 
 	void Set(long xstart, long ystart, long xend, long yend);
 	void MoveBy(long dx, long dy);
+	virtual void GetBounds(long& l, long& t, long& r, long& b) const;
 	bool HitTest(long sx, long sy, long tolerance = 6) const;
 
 	void SetStyle(COLORREF border, COLORREF fill, bool borderEnabled, bool filled, int width);
@@ -93,6 +94,7 @@ class Poly : virtual public Shape
 protected:
 	virtual void CalcVertices(POINT* pts, int& count) const = 0;
 public:
+	void GetBounds(long& l, long& t, long& r, long& b) const override;
 	void Show(HDC hdc) override;
 	void SerializeSvg(FILE* fout) const override;
 };
@@ -147,8 +149,8 @@ public:
 class Node : public Elips
 {
 public:
+	void GetBounds(long& l, long& t, long& r, long& b) const override;
 	void Show(HDC hdc) override;
-	void DrawSelection(HDC hdc) const override;
 	Shape* Clone() const override { return new Node(*this); }
 	const WCHAR* GetTypeName() const override { return L"Node"; }
 	void SerializeSvg(FILE* fout) const override;

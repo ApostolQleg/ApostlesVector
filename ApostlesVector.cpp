@@ -70,7 +70,7 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 
 	wcex.cbSize = sizeof(WNDCLASSEX);
 
-	wcex.style = CS_HREDRAW | CS_VREDRAW;
+	wcex.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
 	wcex.lpfnWndProc = WndProc;
 	wcex.cbClsExtra = 0;
 	wcex.cbWndExtra = 0;
@@ -100,7 +100,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 	hInst = hInstance; // Store instance handle in our global variable
 
 	HWND hWnd = CreateWindowW(szWindowClass, szTitle,
-		WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL,
+		WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL | WS_CLIPCHILDREN,
 		CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
 
 	if (!hWnd)
@@ -136,6 +136,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_NOTIFY:
 		return Editor::getInstance()->OnNotify(lParam);
+	case WM_ERASEBKGND:
+		return 1;
 	case WM_HSCROLL:
 		Editor::getInstance()->OnHScroll(hWnd, wParam);
 		break;
@@ -147,6 +149,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_LBUTTONDOWN:
 		Editor::getInstance()->OnLBDown(hWnd);
+		break;
+	case WM_LBUTTONDBLCLK:
+		Editor::getInstance()->OnLBDblClk(hWnd);
 		break;
 	case WM_MOUSEMOVE:
 		Editor::getInstance()->OnMouseMove(hWnd);

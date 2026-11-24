@@ -28,9 +28,17 @@ static INT_PTR CALLBACK TextDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
 	switch (message)
 	{
 	case WM_INITDIALOG:
+	{
 		pResultText = reinterpret_cast<std::wstring*>(lParam);
-		SetFocus(GetDlgItem(hDlg, IDC_TEXT_EDIT));
+		HWND hEdit = GetDlgItem(hDlg, IDC_TEXT_EDIT);
+		if (pResultText && !pResultText->empty())
+		{
+			SetDlgItemTextW(hDlg, IDC_TEXT_EDIT, pResultText->c_str());
+			SendMessageW(hEdit, EM_SETSEL, 0, -1);
+		}
+		SetFocus(hEdit);
 		return (INT_PTR)FALSE;
+	}
 
 	case WM_COMMAND:
 		if (LOWORD(wParam) == IDOK)
@@ -125,54 +133,104 @@ void Editor::SelectTool(UINT cmdId)
 
 void Editor::ChooseBorderColor(HWND hWnd)
 {
+	Shape* pSel = viewer.GetSelectedShape();
+
 	CHOOSECOLORW cc = {};
 	cc.lStructSize = sizeof(CHOOSECOLORW);
 	cc.hwndOwner = hWnd;
 	cc.lpCustColors = customColors;
-	cc.rgbResult = borderColor;
+	cc.rgbResult = pSel ? pSel->GetBorderColor() : borderColor;
 	cc.Flags = CC_FULLOPEN | CC_RGBINIT;
 
 	if (ChooseColorW(&cc))
 	{
 		borderColor = cc.rgbResult;
 		hasBorder = true;
+
+		if (pSel)
+		{
+			pSel->SetStyle(borderColor, pSel->GetFillColor(), true, pSel->IsFilled(), pSel->GetBorderWidth());
+			files.MarkDirty(hWnd);
+			viewer.InvalidateCanvas(hWnd);
+		}
 		ApplyCurrentStyle(pcurrent);
 	}
 }
 
 void Editor::ChooseFillColor(HWND hWnd)
 {
+	Shape* pSel = viewer.GetSelectedShape();
+
 	CHOOSECOLORW cc = {};
 	cc.lStructSize = sizeof(CHOOSECOLORW);
 	cc.hwndOwner = hWnd;
 	cc.lpCustColors = customColors;
-	cc.rgbResult = fillColor;
+	cc.rgbResult = pSel ? pSel->GetFillColor() : fillColor;
 	cc.Flags = CC_FULLOPEN | CC_RGBINIT;
 
 	if (ChooseColorW(&cc))
 	{
 		fillColor = cc.rgbResult;
 		hasFill = true;
+
+		if (pSel)
+		{
+			pSel->SetStyle(pSel->GetBorderColor(), fillColor, pSel->HasBorder(), true, pSel->GetBorderWidth());
+			files.MarkDirty(hWnd);
+			viewer.InvalidateCanvas(hWnd);
+		}
 		ApplyCurrentStyle(pcurrent);
 	}
 }
 
-void Editor::ToggleNoBorder()
+void Editor::ToggleNoBorder(HWND hWnd)
 {
-	hasBorder = !hasBorder;
+	Shape* pSel = viewer.GetSelectedShape();
+	if (pSel)
+	{
+		bool nextBorder = !pSel->HasBorder();
+		pSel->SetStyle(pSel->GetBorderColor(), pSel->GetFillColor(), nextBorder, pSel->IsFilled(), pSel->GetBorderWidth());
+		hasBorder = nextBorder;
+		files.MarkDirty(hWnd);
+		viewer.InvalidateCanvas(hWnd);
+	}
+	else
+	{
+		hasBorder = !hasBorder;
+	}
 	ApplyCurrentStyle(pcurrent);
 }
 
-void Editor::ToggleNoFill()
+void Editor::ToggleNoFill(HWND hWnd)
 {
-	hasFill = !hasFill;
+	Shape* pSel = viewer.GetSelectedShape();
+	if (pSel)
+	{
+		bool nextFill = !pSel->IsFilled();
+		pSel->SetStyle(pSel->GetBorderColor(), pSel->GetFillColor(), pSel->HasBorder(), nextFill, pSel->GetBorderWidth());
+		hasFill = nextFill;
+		files.MarkDirty(hWnd);
+		viewer.InvalidateCanvas(hWnd);
+	}
+	else
+	{
+		hasFill = !hasFill;
+	}
 	ApplyCurrentStyle(pcurrent);
 }
 
-void Editor::SetBorderWidth(int width)
+void Editor::SetBorderWidth(HWND hWnd, int width)
 {
 	borderWidth = width;
 	hasBorder = true;
+
+	Shape* pSel = viewer.GetSelectedShape();
+	if (pSel)
+	{
+		pSel->SetStyle(pSel->GetBorderColor(), pSel->GetFillColor(), true, pSel->IsFilled(), width);
+		files.MarkDirty(hWnd);
+		viewer.InvalidateCanvas(hWnd);
+	}
 	ApplyCurrentStyle(pcurrent);
 }
 
@@ -194,7 +252,7 @@ void Editor::OnSize(HWND hWnd)
 	toolbar.OnSize(hWnd);
 	viewer.SetTopOffset(toolbar.GetHeight());
 	viewer.UpdateScrollBars(hWnd);
-	InvalidateRect(hWnd, nullptr, FALSE);
+	viewer.InvalidateCanvas(hWnd);
 }
 
 LRESULT Editor::OnNotify(LPARAM lParam)
@@ -230,7 +288,7 @@ void Editor::OnLBDown(HWND hWnd)
 	if (currentToolId == IDM_SELECT)
 	{
 		viewer.SelectAt(sx, sy);
-		InvalidateRect(hWnd, nullptr, FALSE);
+		viewer.InvalidateCanvas(hWnd);
 		return;
 	}
 
@@ -245,7 +303,7 @@ void Editor::OnLBDown(HWND hWnd)
 			lastMoveY = sy;
 			SetCapture(hWnd);
 		}
-		InvalidateRect(hWnd, nullptr, FALSE);
+		viewer.InvalidateCanvas(hWnd);
 		return;
 	}
 
@@ -262,6 +320,23 @@ void Editor::OnLBDown(HWND hWnd)
 	SetCapture(hWnd);
 }
 
+void Editor::OnLBDblClk(HWND hWnd)
+{
+	if (currentToolId != IDM_SELECT) return;
+
+	Shape* pSel = viewer.GetSelectedShape();
+	Text* pText = dynamic_cast<Text*>(pSel);
+	if (!pText) return;
+
+	std::wstring edited = pText->GetText();
+	if (PromptTextInput(hWnd, edited))
+	{
+		pText->SetText(edited);
+		files.MarkDirty(hWnd);
+		viewer.InvalidateCanvas(hWnd);
+	}
+}
+
 void Editor::OnMouseMove(HWND hWnd)
 {
 	if (isMoving)
@@ -276,7 +351,7 @@ void Editor::OnMouseMove(HWND hWnd)
 			lastMoveX = sx;
 			lastMoveY = sy;
 			movedAny = true;
-			InvalidateRect(hWnd, nullptr, FALSE);
+			viewer.InvalidateCanvas(hWnd);
 		}
 		return;
 	}
@@ -316,7 +391,7 @@ void Editor::OnLBUp(HWND hWnd)
 			files.MarkDirty(hWnd);
 			movedAny = false;
 		}
-		InvalidateRect(hWnd, nullptr, FALSE);
+		viewer.InvalidateCanvas(hWnd);
 		return;
 	}
 
@@ -354,7 +429,7 @@ void Editor::OnLBUp(HWND hWnd)
 		pcurrent = next;
 	}
 
-	InvalidateRect(hWnd, nullptr, FALSE);
+	viewer.InvalidateCanvas(hWnd);
 }
 
 void Editor::OnPaint(HWND hWnd)
@@ -379,11 +454,16 @@ void Editor::OnInitMenuPopup(HWND hWnd)
 		CheckMenuItem(hMenu, id, MF_BYCOMMAND | ((id == currentToolId) ? MF_CHECKED : MF_UNCHECKED));
 	}
 
-	CheckMenuItem(hMenu, IDM_NO_BORDER, MF_BYCOMMAND | ((!hasBorder) ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(hMenu, IDM_NO_COLOR, MF_BYCOMMAND | ((!hasFill) ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(hMenu, IDM_WIDTH_1, MF_BYCOMMAND | ((borderWidth == 1 && hasBorder) ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(hMenu, IDM_WIDTH_3, MF_BYCOMMAND | ((borderWidth == 3 && hasBorder) ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(hMenu, IDM_WIDTH_5, MF_BYCOMMAND | ((borderWidth == 5 && hasBorder) ? MF_CHECKED : MF_UNCHECKED));
+	Shape* pSel = viewer.GetSelectedShape();
+	bool curHasBorder = pSel ? pSel->HasBorder() : hasBorder;
+	bool curHasFill = pSel ? pSel->IsFilled() : hasFill;
+	int curWidth = pSel ? pSel->GetBorderWidth() : borderWidth;
+
+	CheckMenuItem(hMenu, IDM_NO_BORDER, MF_BYCOMMAND | ((!curHasBorder) ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(hMenu, IDM_NO_COLOR, MF_BYCOMMAND | ((!curHasFill) ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(hMenu, IDM_WIDTH_1, MF_BYCOMMAND | ((curWidth == 1 && curHasBorder) ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(hMenu, IDM_WIDTH_3, MF_BYCOMMAND | ((curWidth == 3 && curHasBorder) ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(hMenu, IDM_WIDTH_5, MF_BYCOMMAND | ((curWidth == 5 && curHasBorder) ? MF_CHECKED : MF_UNCHECKED));
 
 	EnableMenuItem(hMenu, IDM_UNDO, MF_BYCOMMAND | (viewer.CanUndo() ? MF_ENABLED : MF_GRAYED));
 	EnableMenuItem(hMenu, IDM_REDO, MF_BYCOMMAND | (viewer.CanRedo() ? MF_ENABLED : MF_GRAYED));
@@ -396,6 +476,7 @@ bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 	if (toolbar.IsToolId(wmId))
 	{
 		SelectTool(wmId);
+		viewer.InvalidateCanvas(hWnd);
 		return true;
 	}
 
@@ -425,7 +506,7 @@ bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 		if (viewer.Undo())
 		{
 			files.MarkDirty(hWnd);
-			InvalidateRect(hWnd, nullptr, FALSE);
+			viewer.InvalidateCanvas(hWnd);
 		}
 		return true;
 
@@ -433,7 +514,7 @@ bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 		if (viewer.Redo())
 		{
 			files.MarkDirty(hWnd);
-			InvalidateRect(hWnd, nullptr, FALSE);
+			viewer.InvalidateCanvas(hWnd);
 		}
 		return true;
 
@@ -446,23 +527,23 @@ bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 		return true;
 
 	case IDM_NO_BORDER:
-		ToggleNoBorder();
+		ToggleNoBorder(hWnd);
 		return true;
 
 	case IDM_NO_COLOR:
-		ToggleNoFill();
+		ToggleNoFill(hWnd);
 		return true;
 
 	case IDM_WIDTH_1:
-		SetBorderWidth(1);
+		SetBorderWidth(hWnd, 1);
 		return true;
 
 	case IDM_WIDTH_3:
-		SetBorderWidth(3);
+		SetBorderWidth(hWnd, 3);
 		return true;
 
 	case IDM_WIDTH_5:
-		SetBorderWidth(5);
+		SetBorderWidth(hWnd, 5);
 		return true;
 	}
 

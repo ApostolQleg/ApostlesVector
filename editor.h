@@ -46,9 +46,9 @@ private:
 
 	void ChooseBorderColor(HWND hWnd);
 	void ChooseFillColor(HWND hWnd);
-	void ToggleNoBorder();
-	void ToggleNoFill();
-	void SetBorderWidth(int width);
+	void ToggleNoBorder(HWND hWnd);
+	void ToggleNoFill(HWND hWnd);
+	void SetBorderWidth(HWND hWnd, int width);
 
 	bool PromptTextInput(HWND hWnd, std::wstring& outText) const;
 
@@ -64,6 +64,7 @@ public:
 	void OnMouseWheel(HWND hWnd, WPARAM wParam);
 
 	void OnLBDown(HWND hWnd);
+	void OnLBDblClk(HWND hWnd);
 	void OnMouseMove(HWND hWnd);
 	void OnLBUp(HWND hWnd);
 

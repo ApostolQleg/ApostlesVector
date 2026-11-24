@@ -68,6 +68,7 @@ public:
 
 	void ScreenToScene(long clientX, long clientY, long& sceneX, long& sceneY, bool clampToScene = true) const;
 	void BeginCanvasDraw(HDC hdc, HWND hWnd) const;
+	void InvalidateCanvas(HWND hWnd) const;
 
 	void Render(HWND hWnd) const;
 };

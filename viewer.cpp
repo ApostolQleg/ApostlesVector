@@ -80,6 +80,7 @@ bool Viewer::Undo()
 	Shape* last = PopFromArray(shapes, shapesCount);
 	if (!last) return false;
 
+	last->SetSelected(false);
 	if (shapesCount <= selectedIndex)
 		selectedIndex = -1;
 
@@ -92,6 +93,7 @@ bool Viewer::Redo()
 	Shape* restored = PopFromArray(redoShapes, redoCount);
 	if (!restored) return false;
 
+	restored->SetSelected(false);
 	PushToArray(shapes, shapesCount, shapesCapacity, restored);
 	return true;
 }
@@ -139,6 +141,19 @@ bool Viewer::MoveSelectedBy(long dx, long dy)
 
 	pSel->MoveBy(dx, dy);
 	return true;
+}
+
+void Viewer::InvalidateCanvas(HWND hWnd) const
+{
+	if (!hWnd) return;
+
+	RECT rc = {};
+	GetClientRect(hWnd, &rc);
+	rc.top = topOffset;
+	if (rc.bottom > rc.top)
+	{
+		InvalidateRect(hWnd, &rc, FALSE);
+	}
 }
 
 void Viewer::UpdateScrollBars(HWND hWnd)
@@ -215,7 +230,7 @@ void Viewer::HandleScroll(HWND hWnd, int barType, WPARAM wParam, int& scrollPos,
 		si.fMask = SIF_POS;
 		si.nPos = scrollPos;
 		SetScrollInfo(hWnd, barType, &si, TRUE);
-		InvalidateRect(hWnd, nullptr, FALSE);
+		InvalidateCanvas(hWnd);
 	}
 }
 
@@ -259,7 +274,7 @@ void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 		{
 			scrollX = newPos;
 			SetScrollPos(hWnd, SB_HORZ, scrollX, TRUE);
-			InvalidateRect(hWnd, nullptr, FALSE);
+			InvalidateCanvas(hWnd);
 		}
 	}
 	else
@@ -275,7 +290,7 @@ void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 		{
 			scrollY = newPos;
 			SetScrollPos(hWnd, SB_VERT, scrollY, TRUE);
-			InvalidateRect(hWnd, nullptr, FALSE);
+			InvalidateCanvas(hWnd);
 		}
 	}
 }
