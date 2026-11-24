@@ -67,6 +67,11 @@ public:
 	void OnMouseWheel(HWND hWnd, WPARAM wParam);
 
 	void ScreenToScene(long clientX, long clientY, long& sceneX, long& sceneY, bool clampToScene = true) const;
+	void SceneToClient(long sceneX, long sceneY, long& clientX, long& clientY) const
+	{
+		clientX = sceneX - scrollX;
+		clientY = sceneY + topOffset - scrollY;
+	}
 	void BeginCanvasDraw(HDC hdc, HWND hWnd) const;
 	void InvalidateCanvas(HWND hWnd) const;
 

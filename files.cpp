@@ -4,7 +4,7 @@
 #include "viewer.h"
 #include "shape.h"
 
-#define FILE_LINE_BUFFER 2048
+#define FILE_LINE_CHUNK 2048
 
 std::wstring Files::ExtractFileName(const std::wstring& path) const
 {
@@ -87,36 +87,74 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 		return false;
 	}
 
-	viewer.Clear();
+	std::vector<Shape*> loadedShapes;
+	bool hasHeader = false;
+	bool parseOk = true;
 
-	WCHAR line[FILE_LINE_BUFFER] = {};
-	while (fgetws(line, FILE_LINE_BUFFER, fin))
+	WCHAR chunk[FILE_LINE_CHUNK] = {};
+	std::wstring lineStr;
+
+	while (fgetws(chunk, _countof(chunk), fin))
 	{
-		size_t len = wcslen(line);
-		while (len > 0 && (line[len - 1] == L'\n' || line[len - 1] == L'\r'))
-			line[--len] = L'\0';
+		lineStr += chunk;
+		if (!lineStr.empty() && lineStr.back() != L'\n' && !feof(fin))
+			continue;
 
-		if (len == 0) continue;
+		while (!lineStr.empty() && (lineStr.back() == L'\n' || lineStr.back() == L'\r'))
+			lineStr.pop_back();
+
+		if (lineStr.empty())
+		{
+			lineStr.clear();
+			continue;
+		}
 
 		WCHAR typeName[64] = {};
 		int offset = 0;
-		if (swscanf_s(line, L"%63s%n", typeName, (unsigned)_countof(typeName), &offset) == 1)
+		if (swscanf_s(lineStr.c_str(), L"%63s%n", typeName, (unsigned)_countof(typeName), &offset) != 1)
 		{
-			if (wcscmp(typeName, L"APOSTLES_VECTOR") == 0 || wcscmp(typeName, L"COUNT") == 0)
-				continue;
-
-			Shape* pShape = Shape::CreateByName(typeName);
-			if (pShape)
-			{
-				if (pShape->Deserialize(line + offset))
-					viewer.AddShape(pShape, false);
-				else
-					delete pShape;
-			}
+			parseOk = false;
+			break;
 		}
+
+		if (wcscmp(typeName, L"APOSTLES_VECTOR") == 0)
+		{
+			hasHeader = true;
+			lineStr.clear();
+			continue;
+		}
+		if (wcscmp(typeName, L"COUNT") == 0)
+		{
+			lineStr.clear();
+			continue;
+		}
+
+		Shape* pShape = Shape::CreateByName(typeName);
+		if (!pShape || !pShape->Deserialize(lineStr.c_str() + offset))
+		{
+			delete pShape;
+			parseOk = false;
+			break;
+		}
+
+		loadedShapes.push_back(pShape);
+		lineStr.clear();
 	}
 
 	fclose(fin);
+
+	if (!parseOk || !hasHeader)
+	{
+		for (Shape* s : loadedShapes)
+			delete s;
+		MessageBoxW(hWnd, L"The scene file is corrupted or has an invalid format.", L"File Error", MB_OK | MB_ICONERROR);
+		return false;
+	}
+
+	viewer.Clear();
+	for (Shape* s : loadedShapes)
+		viewer.AddShape(s, false);
+
 	return true;
 }
 

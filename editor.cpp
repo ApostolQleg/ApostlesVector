@@ -2,8 +2,6 @@
 #include "framework.h"
 #include "editor.h"
 
-#define TEXT_INPUT_BUFFER 1024
-
 Editor* Editor::p_instance = nullptr;
 
 Editor* Editor::getInstance()
@@ -19,68 +17,152 @@ Editor::~Editor()
 {
 	delete pcurrent;
 	pcurrent = nullptr;
+	delete resizeOrig;
+	resizeOrig = nullptr;
+	if (hEditFont)
+	{
+		DeleteObject(hEditFont);
+		hEditFont = nullptr;
+	}
 }
 
-static INT_PTR CALLBACK TextDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK InplaceEditProc(HWND hEdit, UINT msg, WPARAM wParam, LPARAM lParam,
+	UINT_PTR idSubclass, DWORD_PTR)
 {
-	static std::wstring* pResultText = nullptr;
-
-	switch (message)
+	switch (msg)
 	{
-	case WM_INITDIALOG:
-	{
-		pResultText = reinterpret_cast<std::wstring*>(lParam);
-		HWND hEdit = GetDlgItem(hDlg, IDC_TEXT_EDIT);
-		if (pResultText && !pResultText->empty())
+	case WM_KEYDOWN:
+		if (wParam == VK_ESCAPE)
 		{
-			SetDlgItemTextW(hDlg, IDC_TEXT_EDIT, pResultText->c_str());
-			SendMessageW(hEdit, EM_SETSEL, 0, -1);
+			PostMessageW(GetParent(hEdit), WM_COMMAND, MAKEWPARAM(IDM_TEXT_CANCEL, 0), 0);
+			return 0;
 		}
-		SetFocus(hEdit);
-		return (INT_PTR)FALSE;
-	}
-
-	case WM_COMMAND:
-		if (LOWORD(wParam) == IDOK)
+		if (wParam == VK_RETURN && (GetKeyState(VK_CONTROL) & 0x8000))
 		{
-			if (pResultText)
-			{
-				WCHAR buf[TEXT_INPUT_BUFFER] = {};
-				GetDlgItemTextW(hDlg, IDC_TEXT_EDIT, buf, _countof(buf));
-				*pResultText = buf;
-			}
-			EndDialog(hDlg, IDOK);
-			return (INT_PTR)TRUE;
-		}
-		if (LOWORD(wParam) == IDCANCEL)
-		{
-			EndDialog(hDlg, IDCANCEL);
-			return (INT_PTR)TRUE;
+			PostMessageW(GetParent(hEdit), WM_COMMAND, MAKEWPARAM(IDM_TEXT_COMMIT, 0), 0);
+			return 0;
 		}
 		break;
+
+	case WM_CHAR:
+		if (wParam == VK_ESCAPE || wParam == L'\n') return 0;   // без сигналу
+		break;
+
+	case WM_NCDESTROY:
+		RemoveWindowSubclass(hEdit, InplaceEditProc, idSubclass);
+		break;
 	}
-	return (INT_PTR)FALSE;
+	return DefSubclassProc(hEdit, msg, wParam, lParam);
 }
 
-bool Editor::PromptTextInput(HWND hWnd, std::wstring& outText) const
+void Editor::BeginTextEdit(HWND hWnd, Text* target, long l, long t, long r, long b)
 {
+	EndTextEdit(hWnd, true);
+
+	if (r - l < 180) r = l + 180;
+	if (b - t < 60)  b = t + 60;
+	editTarget = target;
+	editSceneRect = { l, t, r, b };
+
+	long cx = 0, cy = 0;
+	viewer.SceneToClient(l, t, cx, cy);
+
+	const int bw = target ? target->GetBorderWidth() : borderWidth;
+	hEditFont = CreateFontW(16 + bw * 4, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+		DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+		CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+
+	// у фігурі переноси зберігаються як '\n', а EDIT потребує "\r\n"
+	std::wstring initial;
+	if (target)
+	{
+		for (wchar_t ch : target->GetText())
+		{
+			if (ch == L'\n') initial += L"\r\n";
+			else initial += ch;
+		}
+	}
+
 	HINSTANCE hInst = (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
-	INT_PTR res = DialogBoxParamW(
-		hInst,
-		MAKEINTRESOURCEW(IDD_TEXT_DIALOG),
-		hWnd,
-		TextDlgProc,
-		reinterpret_cast<LPARAM>(&outText)
-	);
-	return (res == IDOK && !outText.empty());
+	hEdit = CreateWindowExW(0, L"EDIT", initial.c_str(),
+		WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
+		cx, cy, (int)(r - l), (int)(b - t),
+		hWnd, (HMENU)(INT_PTR)IDC_INPLACE_EDIT, hInst, nullptr);
+
+	if (!hEdit)
+	{
+		DeleteObject(hEditFont);
+		hEditFont = nullptr;
+		return;
+	}
+
+	SendMessageW(hEdit, WM_SETFONT, (WPARAM)hEditFont, TRUE);
+	SendMessageW(hEdit, EM_LIMITTEXT, 1000, 0);
+	SetWindowSubclass(hEdit, InplaceEditProc, 1, 0);
+	SetFocus(hEdit);
+	SendMessageW(hEdit, EM_SETSEL, 0, -1);
 }
 
-void Editor::GetSceneMousePos(HWND hWnd, long& sx, long& sy) const
+void Editor::EndTextEdit(HWND hWnd, bool commit)
 {
-	POINT pt = {};
-	GetCursorPos(&pt);
-	ScreenToClient(hWnd, &pt);
-	viewer.ScreenToScene(pt.x, pt.y, sx, sy, true);
+	if (!hEdit) return;
+
+	HWND hLocal = hEdit;
+	hEdit = nullptr;               // захист від повторного входу через EN_KILLFOCUS
+
+	std::wstring str;
+	if (commit)
+	{
+		int len = GetWindowTextLengthW(hLocal);
+		str.resize(len);
+		if (len > 0) GetWindowTextW(hLocal, &str[0], len + 1);
+		std::wstring clean;
+		for (wchar_t ch : str)
+			if (ch != L'\r') clean += ch;
+		str = clean;
+	}
+
+	DestroyWindow(hLocal);
+	if (hEditFont)
+	{
+		DeleteObject(hEditFont);
+		hEditFont = nullptr;
+	}
+
+	Text* target = editTarget;
+	editTarget = nullptr;
+
+	if (commit && !str.empty())
+	{
+		if (target)
+		{
+			if (str != target->GetText())
+			{
+				target->SetText(str);
+				files.MarkDirty(hWnd);
+			}
+		}
+		else
+		{
+			Text* pNew = new Text();
+			pNew->Set(editSceneRect.left, editSceneRect.top,
+				editSceneRect.right, editSceneRect.bottom);
+			ApplyCurrentStyle(pNew);
+			pNew->SetText(str);
+			viewer.AddShape(pNew);
+			files.MarkDirty(hWnd);
+		}
+	}
+
+	if (!GetFocus()) SetFocus(hWnd);
+	viewer.InvalidateCanvas(hWnd);
+}
+
+void Editor::GetSceneMousePos(LPARAM lParam, long& sx, long& sy) const
+{
+	int cx = (int)(short)LOWORD(lParam);
+	int cy = (int)(short)HIWORD(lParam);
+	viewer.ScreenToScene(cx, cy, sx, sy, true);
 }
 
 void Editor::ApplyCurrentStyle(Shape* pShape) const
@@ -93,11 +175,15 @@ void Editor::StartTool(Shape* pShape, UINT cmdId)
 {
 	delete pcurrent;
 	pcurrent = pShape;
+	delete resizeOrig;
+	resizeOrig = nullptr;
 	currentToolId = cmdId;
 	isDrawing = false;
 	rubberDrawn = false;
 	isMoving = false;
 	movedAny = false;
+	isResizing = false;
+	resizeHandle = -1;
 
 	if (cmdId != IDM_SELECT && cmdId != IDM_MOVE)
 	{
@@ -249,6 +335,8 @@ void Editor::OnCreate(HWND hWnd)
 
 void Editor::OnSize(HWND hWnd)
 {
+	EndTextEdit(hWnd, true);
+	rubberDrawn = false;
 	toolbar.OnSize(hWnd);
 	viewer.SetTopOffset(toolbar.GetHeight());
 	viewer.UpdateScrollBars(hWnd);
@@ -262,31 +350,56 @@ LRESULT Editor::OnNotify(LPARAM lParam)
 
 void Editor::OnHScroll(HWND hWnd, WPARAM wParam)
 {
+	EndTextEdit(hWnd, true);
+	rubberDrawn = false;
 	viewer.OnHScroll(hWnd, wParam);
 }
 
 void Editor::OnVScroll(HWND hWnd, WPARAM wParam)
 {
+	EndTextEdit(hWnd, true);
+	rubberDrawn = false;
 	viewer.OnVScroll(hWnd, wParam);
 }
 
 void Editor::OnMouseWheel(HWND hWnd, WPARAM wParam)
 {
+	EndTextEdit(hWnd, true);
+	rubberDrawn = false;
 	viewer.OnMouseWheel(hWnd, wParam);
 }
 
-void Editor::OnLBDown(HWND hWnd)
+void Editor::OnLBDown(HWND hWnd, LPARAM lParam)
 {
-	POINT pt = {};
-	GetCursorPos(&pt);
-	ScreenToClient(hWnd, &pt);
-	if (pt.y < viewer.GetTopOffset()) return;
+	if (hEdit)
+	{
+		EndTextEdit(hWnd, true);
+		return;
+	}
+
+	int cx = (int)(short)LOWORD(lParam);
+	int cy = (int)(short)HIWORD(lParam);
+	if (cy < viewer.GetTopOffset()) return;
 
 	long sx = 0, sy = 0;
-	viewer.ScreenToScene(pt.x, pt.y, sx, sy, true);
+	viewer.ScreenToScene(cx, cy, sx, sy, true);
 
 	if (currentToolId == IDM_SELECT)
 	{
+		if (Shape* pSel = viewer.GetSelectedShape())
+		{
+			int h = pSel->HitHandle(sx, sy);
+			if (h >= 0)
+			{
+				delete resizeOrig;
+				resizeOrig = pSel->Clone();
+				resizeHandle = h;
+				isResizing = true;
+				movedAny = false;
+				SetCapture(hWnd);
+				return;
+			}
+		}
 		viewer.SelectAt(sx, sy);
 		viewer.InvalidateCanvas(hWnd);
 		return;
@@ -323,26 +436,36 @@ void Editor::OnLBDown(HWND hWnd)
 void Editor::OnLBDblClk(HWND hWnd)
 {
 	if (currentToolId != IDM_SELECT) return;
-
-	Shape* pSel = viewer.GetSelectedShape();
-	Text* pText = dynamic_cast<Text*>(pSel);
+	Text* pText = dynamic_cast<Text*>(viewer.GetSelectedShape());
 	if (!pText) return;
 
-	std::wstring edited = pText->GetText();
-	if (PromptTextInput(hWnd, edited))
-	{
-		pText->SetText(edited);
-		files.MarkDirty(hWnd);
-		viewer.InvalidateCanvas(hWnd);
-	}
+	long l, t, r, b;
+	pText->GetBounds(l, t, r, b);
+	BeginTextEdit(hWnd, pText, l, t, r, b);
 }
 
-void Editor::OnMouseMove(HWND hWnd)
+void Editor::OnMouseMove(HWND hWnd, LPARAM lParam)
 {
+	if (isResizing)
+	{
+		long sx = 0, sy = 0;
+		GetSceneMousePos(lParam, sx, sy);
+		if (Shape* pSel = viewer.GetSelectedShape())
+		{
+			if (resizeOrig)
+			{
+				pSel->ResizeFrom(*resizeOrig, resizeHandle, sx, sy);
+				movedAny = true;
+				viewer.InvalidateCanvas(hWnd);
+			}
+		}
+		return;
+	}
+
 	if (isMoving)
 	{
 		long sx = 0, sy = 0;
-		GetSceneMousePos(hWnd, sx, sy);
+		GetSceneMousePos(lParam, sx, sy);
 		long dx = sx - lastMoveX;
 		long dy = sy - lastMoveY;
 
@@ -369,7 +492,7 @@ void Editor::OnMouseMove(HWND hWnd)
 		pcurrent->Show(hdc);
 
 	long x = 0, y = 0;
-	GetSceneMousePos(hWnd, x, y);
+	GetSceneMousePos(lParam, x, y);
 
 	pcurrent->Set(xstart, ystart, x, y);
 	pcurrent->Show(hdc);
@@ -380,8 +503,23 @@ void Editor::OnMouseMove(HWND hWnd)
 	ReleaseDC(hWnd, hdc);
 }
 
-void Editor::OnLBUp(HWND hWnd)
+void Editor::OnLBUp(HWND hWnd, LPARAM lParam)
 {
+	if (isResizing)
+	{
+		isResizing = false;
+		ReleaseCapture();
+		delete resizeOrig;
+		resizeOrig = nullptr;
+		if (movedAny)
+		{
+			files.MarkDirty(hWnd);
+			movedAny = false;
+		}
+		viewer.InvalidateCanvas(hWnd);
+		return;
+	}
+
 	if (isMoving)
 	{
 		isMoving = false;
@@ -402,7 +540,7 @@ void Editor::OnLBUp(HWND hWnd)
 	ReleaseCapture();
 
 	long x = 0, y = 0;
-	GetSceneMousePos(hWnd, x, y);
+	GetSceneMousePos(lParam, x, y);
 
 	pcurrent->Set(xstart, ystart, x, y);
 	ApplyCurrentStyle(pcurrent);
@@ -410,30 +548,31 @@ void Editor::OnLBUp(HWND hWnd)
 
 	if (currentToolId == IDM_TEXT)
 	{
-		Text* pText = dynamic_cast<Text*>(pcurrent);
-		std::wstring entered;
-		if (pText && PromptTextInput(hWnd, entered))
-		{
-			pText->SetText(entered);
-			Shape* next = pcurrent->Clone();
-			viewer.AddShape(pcurrent);
-			files.MarkDirty(hWnd);
-			pcurrent = next;
-		}
+		long l = (xstart < x) ? xstart : x, r = (xstart < x) ? x : xstart;
+		long t = (ystart < y) ? ystart : y, b = (ystart < y) ? y : ystart;
+		BeginTextEdit(hWnd, nullptr, l, t, r, b);
+		viewer.InvalidateCanvas(hWnd);
+		return;
 	}
-	else
+
+	// клік без перетягування не створює фігуру (крім Node, якій потрібна лише точка)
+	if (currentToolId != IDM_NODE && labs(x - xstart) < 3 && labs(y - ystart) < 3)
 	{
-		Shape* next = pcurrent->Clone();
-		viewer.AddShape(pcurrent);
-		files.MarkDirty(hWnd);
-		pcurrent = next;
+		viewer.InvalidateCanvas(hWnd);
+		return;
 	}
+
+	Shape* next = pcurrent->Clone();
+	viewer.AddShape(pcurrent);
+	files.MarkDirty(hWnd);
+	pcurrent = next;
 
 	viewer.InvalidateCanvas(hWnd);
 }
 
 void Editor::OnPaint(HWND hWnd)
 {
+	rubberDrawn = false;
 	viewer.Render(hWnd);
 }
 
@@ -472,6 +611,14 @@ void Editor::OnInitMenuPopup(HWND hWnd)
 bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 {
 	UINT wmId = LOWORD(wParam);
+	if (wmId == IDC_INPLACE_EDIT)
+	{
+		if (HIWORD(wParam) == EN_KILLFOCUS) EndTextEdit(hWnd, true);
+		return true;
+	}
+	if (wmId == IDM_TEXT_COMMIT) { EndTextEdit(hWnd, true);  return true; }
+	if (wmId == IDM_TEXT_CANCEL) { EndTextEdit(hWnd, false); return true; }
+	EndTextEdit(hWnd, true);   // будь-яка інша команда спершу завершує редагування
 
 	if (toolbar.IsToolId(wmId))
 	{
@@ -552,5 +699,6 @@ bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 
 bool Editor::OnClose(HWND hWnd)
 {
+	EndTextEdit(hWnd, true);
 	return files.ConfirmDiscardChanges(hWnd, viewer);
 }

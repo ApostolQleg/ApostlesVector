@@ -10,6 +10,7 @@
 
 // Global Variables:
 HINSTANCE hInst;                                // current instance
+HWND hMainWnd = nullptr;                        // main application window
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 
@@ -27,7 +28,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	UNREFERENCED_PARAMETER(hPrevInstance);
 	UNREFERENCED_PARAMETER(lpCmdLine);
 
-	InitCommonControls();
+	INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES };
+	InitCommonControlsEx(&icc);
 
 	// Initialize global strings
 	LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -47,7 +49,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	// Main message loop:
 	while (GetMessage(&msg, nullptr, 0, 0))
 	{
-		if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
+		bool skipAccel = Editor::getInstance()->IsTextEditing();
+		if (skipAccel || !TranslateAccelerator(hMainWnd, hAccelTable, &msg))
 		{
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
@@ -108,6 +111,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 		return FALSE;
 	}
 
+	hMainWnd = hWnd;
+
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
 
@@ -148,16 +153,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		Editor::getInstance()->OnMouseWheel(hWnd, wParam);
 		break;
 	case WM_LBUTTONDOWN:
-		Editor::getInstance()->OnLBDown(hWnd);
+		Editor::getInstance()->OnLBDown(hWnd, lParam);
 		break;
 	case WM_LBUTTONDBLCLK:
 		Editor::getInstance()->OnLBDblClk(hWnd);
 		break;
 	case WM_MOUSEMOVE:
-		Editor::getInstance()->OnMouseMove(hWnd);
+		Editor::getInstance()->OnMouseMove(hWnd, lParam);
 		break;
 	case WM_LBUTTONUP:
-		Editor::getInstance()->OnLBUp(hWnd);
+		Editor::getInstance()->OnLBUp(hWnd, lParam);
 		break;
 	case WM_PAINT:
 		Editor::getInstance()->OnPaint(hWnd);

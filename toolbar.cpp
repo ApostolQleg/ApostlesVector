@@ -30,34 +30,29 @@ static const ToolItem toolbarItems[] = {
 	{ IDM_TEXT,        15, L"Text" }
 };
 
-static const int toolbarItemsCount = sizeof(toolbarItems) / sizeof(toolbarItems[0]);
+static constexpr int toolbarItemsCount = sizeof(toolbarItems) / sizeof(toolbarItems[0]);
 
 void Toolbar::Create(HWND hWndParent, HINSTANCE hInst)
 {
 	hWndToolbar = CreateWindowExW(
-		0,
-		TOOLBARCLASSNAMEW,
-		nullptr,
-		WS_CHILD | WS_VISIBLE | WS_BORDER | WS_CLIPSIBLINGS | CCS_TOP | TBSTYLE_TOOLTIPS | TBSTYLE_FLAT,
-		0, 0, 0, 0,
-		hWndParent,
-		(HMENU)IDC_MAIN_TOOLBAR,
-		hInst,
-		nullptr
-	);
-
+		0, TOOLBARCLASSNAMEW, nullptr,
+		WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | CCS_TOP | CCS_NODIVIDER |
+		TBSTYLE_TOOLTIPS | TBSTYLE_FLAT,
+		0, 0, 0, 0, hWndParent, (HMENU)IDC_MAIN_TOOLBAR, hInst, nullptr);
 	if (!hWndToolbar) return;
 
 	SendMessage(hWndToolbar, TB_BUTTONSTRUCTSIZE, (WPARAM)sizeof(TBBUTTON), 0);
+	SendMessage(hWndToolbar, TB_SETEXTENDEDSTYLE, 0,
+		TBSTYLE_EX_DOUBLEBUFFER | TBSTYLE_EX_HIDECLIPPEDBUTTONS);
 	SendMessage(hWndToolbar, TB_SETBITMAPSIZE, 0, MAKELPARAM(48, 48));
-	SendMessage(hWndToolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(48, 48));
+	SendMessage(hWndToolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(58, 58));
 
 	TBADDBITMAP tbab = {};
 	tbab.hInst = hInst;
 	tbab.nID = IDB_TOOLBAR;
 	SendMessage(hWndToolbar, TB_ADDBITMAP, toolbarItemsCount, (LPARAM)&tbab);
 
-	const int totalButtons = toolbarItemsCount + 1; // + 1 сепаратор
+	constexpr int totalButtons = toolbarItemsCount + 1; // + 1 сепаратор
 	TBBUTTON tbb[totalButtons] = {};
 	int n = 0;
 
@@ -69,7 +64,7 @@ void Toolbar::Create(HWND hWndParent, HINSTANCE hInst)
 		tbb[n].iBitmap = toolbarItems[i].bitmapIndex;
 		tbb[n].idCommand = toolbarItems[i].id;
 		tbb[n].fsState = TBSTATE_ENABLED;
-		tbb[n].fsStyle = BTNS_BUTTON;
+		tbb[n].fsStyle = BTNS_CHECKGROUP;
 		n++;
 	}
 
@@ -111,7 +106,7 @@ void Toolbar::SetActiveTool(UINT cmdId)
 	for (int i = 0; i < toolbarItemsCount; i++)
 	{
 		UINT id = toolbarItems[i].id;
-		SendMessage(hWndToolbar, TB_PRESSBUTTON, id, (id == cmdId) ? TRUE : FALSE);
+		SendMessage(hWndToolbar, TB_CHECKBUTTON, id, MAKELPARAM(id == cmdId, 0));
 	}
 }
 
@@ -139,7 +134,7 @@ LRESULT Toolbar::OnNotify(LPARAM lParam)
 		{
 			if (toolbarItems[i].id == id)
 			{
-				lstrcpyW(lpttt->szText, toolbarItems[i].tooltip);
+				wcscpy_s(lpttt->szText, _countof(lpttt->szText), toolbarItems[i].tooltip);
 				return 0;
 			}
 		}

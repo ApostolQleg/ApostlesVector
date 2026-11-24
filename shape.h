@@ -2,6 +2,9 @@
 
 #define NODE_RADIUS 12
 #define EDGE_RADIUS 5
+#define SELECTION_MARGIN 4
+#define HANDLE_SIZE 4
+#define MIN_SHAPE_SIZE 8
 
 class Shape
 {
@@ -23,12 +26,19 @@ protected:
 	void NormalizeCoords(long& l, long& t, long& r, long& b) const;
 
 public:
+	enum class ResizeMode { None, Box, Endpoints };
+
 	virtual ~Shape() {}
 
 	void Set(long xstart, long ystart, long xend, long yend);
 	void MoveBy(long dx, long dy);
 	virtual void GetBounds(long& l, long& t, long& r, long& b) const;
-	bool HitTest(long sx, long sy, long tolerance = 6) const;
+	virtual bool HitTest(long sx, long sy, long tolerance = 6) const;
+
+	virtual ResizeMode GetResizeMode() const { return ResizeMode::Box; }
+	int GetHandlePoints(POINT* pts) const;
+	int HitHandle(long sx, long sy) const;
+	void ResizeFrom(const Shape& orig, int handle, long mx, long my);
 
 	void SetStyle(COLORREF border, COLORREF fill, bool borderEnabled, bool filled, int width);
 	void SetRubber(bool r) { rubber = r; }
@@ -63,6 +73,8 @@ public:
 class Line : virtual public Shape
 {
 public:
+	bool HitTest(long sx, long sy, long tol = 6) const override;
+	ResizeMode GetResizeMode() const override { return ResizeMode::Endpoints; }
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Line(*this); }
 	const WCHAR* GetTypeName() const override { return L"Line"; }
@@ -149,6 +161,7 @@ public:
 class Node : public Elips
 {
 public:
+	ResizeMode GetResizeMode() const override { return ResizeMode::None; }
 	void GetBounds(long& l, long& t, long& r, long& b) const override;
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Node(*this); }
@@ -168,6 +181,8 @@ public:
 class Edge : public Line, public Elips
 {
 public:
+	bool HitTest(long sx, long sy, long tol = 6) const override { return Line::HitTest(sx, sy, tol); }
+	ResizeMode GetResizeMode() const override { return ResizeMode::Endpoints; }
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Edge(*this); }
 	const WCHAR* GetTypeName() const override { return L"Edge"; }
@@ -177,6 +192,8 @@ public:
 class Cube : public Line, public Rect
 {
 public:
+	bool HitTest(long sx, long sy, long tol = 6) const override { return Shape::HitTest(sx, sy, tol); }
+	ResizeMode GetResizeMode() const override { return ResizeMode::Box; }
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Cube(*this); }
 	const WCHAR* GetTypeName() const override { return L"Cube"; }
@@ -186,6 +203,8 @@ public:
 class Cyl : public Line, public Elips
 {
 public:
+	bool HitTest(long sx, long sy, long tol = 6) const override { return Shape::HitTest(sx, sy, tol); }
+	ResizeMode GetResizeMode() const override { return ResizeMode::Box; }
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Cyl(*this); }
 	const WCHAR* GetTypeName() const override { return L"Cylinder"; }
