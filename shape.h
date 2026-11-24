@@ -1,10 +1,10 @@
 #pragma once
 
-#define NODE_RADIUS 12
-#define EDGE_RADIUS 5
-#define SELECTION_MARGIN 4
-#define HANDLE_SIZE 4
-#define MIN_SHAPE_SIZE 8
+constexpr long kNodeRadius = 12;
+constexpr long kEdgeRadius = 5;
+constexpr long kSelectionMargin = 4;
+constexpr long kHandleSize = 4;
+constexpr long kMinShapeSize = 8;
 
 class Shape
 {
@@ -25,12 +25,16 @@ protected:
 	HBRUSH CreateFillBrush(bool& createdBrush) const;
 	void NormalizeCoords(long& l, long& t, long& r, long& b) const;
 
+	void DrawLinePrimitive(HDC hdc, long ax, long ay, long bx, long by) const;
+	void DrawRectPrimitive(HDC hdc, long ax, long ay, long bx, long by, bool allowFill) const;
+	void DrawEllipsePrimitive(HDC hdc, long ax, long ay, long bx, long by, bool allowFill) const;
+
 public:
 	enum class ResizeMode { None, Box, Endpoints };
 
-	virtual ~Shape() {}
+	virtual ~Shape() = default;
 
-	void Set(long xstart, long ystart, long xend, long yend);
+	void Set(long xStart, long yStart, long xEnd, long yEnd);
 	void MoveBy(long dx, long dy);
 	virtual void GetBounds(long& l, long& t, long& r, long& b) const;
 	virtual bool HitTest(long sx, long sy, long tolerance = 6) const;
@@ -56,58 +60,57 @@ public:
 	int GetBorderWidth() const { return borderWidth; }
 	bool IsSelected() const { return selected; }
 
-	virtual void Show(HDC hdc) = 0;
+	virtual void Show(HDC hdc) const = 0;
 	virtual void DrawSelection(HDC hdc) const;
-	virtual Shape* Clone() const = 0;
+	virtual std::unique_ptr<Shape> Clone() const = 0;
 	virtual const WCHAR* GetTypeName() const = 0;
 
 	virtual void Serialize(FILE* fout) const;
 	virtual bool Deserialize(const WCHAR* params);
 	virtual void SerializeSvg(FILE* fout) const;
-
-	static Shape* CreateByName(const WCHAR* typeName);
 };
 
-// Примітиви
+// Базові примітиви
 
-class Line : virtual public Shape
+class Line : public Shape
 {
 public:
-	bool HitTest(long sx, long sy, long tol = 6) const override;
+	bool HitTest(long sx, long sy, long tolerance = 6) const override;
 	ResizeMode GetResizeMode() const override { return ResizeMode::Endpoints; }
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Line(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Line>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Line"; }
 	void SerializeSvg(FILE* fout) const override;
 };
 
-class Rect : virtual public Shape
+class Rect : public Shape
 {
 public:
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Rect(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Rect>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Rectangle"; }
 	void SerializeSvg(FILE* fout) const override;
 };
 
-class Elips : virtual public Shape
+class Elips : public Shape
 {
 public:
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Elips(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Elips>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Ellipse"; }
 	void SerializeSvg(FILE* fout) const override;
 };
 
 // Багатокутники
 
-class Poly : virtual public Shape
+class Poly : public Shape
 {
 protected:
 	virtual void CalcVertices(POINT* pts, int& count) const = 0;
+
 public:
 	void GetBounds(long& l, long& t, long& r, long& b) const override;
-	void Show(HDC hdc) override;
+	void Show(HDC hdc) const override;
 	void SerializeSvg(FILE* fout) const override;
 };
 
@@ -115,8 +118,9 @@ class Trngl : public Poly
 {
 protected:
 	void CalcVertices(POINT* pts, int& count) const override;
+
 public:
-	Shape* Clone() const override { return new Trngl(*this); }
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Trngl>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Triangle"; }
 };
 
@@ -124,8 +128,9 @@ class RightTrngl : public Poly
 {
 protected:
 	void CalcVertices(POINT* pts, int& count) const override;
+
 public:
-	Shape* Clone() const override { return new RightTrngl(*this); }
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<RightTrngl>(*this); }
 	const WCHAR* GetTypeName() const override { return L"RightTriangle"; }
 };
 
@@ -133,8 +138,9 @@ class Romb : public Poly
 {
 protected:
 	void CalcVertices(POINT* pts, int& count) const override;
+
 public:
-	Shape* Clone() const override { return new Romb(*this); }
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Romb>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Rhombus"; }
 };
 
@@ -142,8 +148,9 @@ class Pent : public Poly
 {
 protected:
 	void CalcVertices(POINT* pts, int& count) const override;
+
 public:
-	Shape* Clone() const override { return new Pent(*this); }
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Pent>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Pentagon"; }
 };
 
@@ -151,20 +158,21 @@ class Hex : public Poly
 {
 protected:
 	void CalcVertices(POINT* pts, int& count) const override;
+
 public:
-	Shape* Clone() const override { return new Hex(*this); }
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Hex>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Hexagon"; }
 };
 
 // Складні фігури
 
-class Node : public Elips
+class Node : public Shape
 {
 public:
 	ResizeMode GetResizeMode() const override { return ResizeMode::None; }
 	void GetBounds(long& l, long& t, long& r, long& b) const override;
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Node(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Node>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Node"; }
 	void SerializeSvg(FILE* fout) const override;
 };
@@ -172,57 +180,78 @@ public:
 class Arrow : public Line
 {
 public:
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Arrow(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Arrow>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Arrow"; }
 	void SerializeSvg(FILE* fout) const override;
 };
 
-class Edge : public Line, public Elips
+class Edge : public Line
 {
 public:
-	bool HitTest(long sx, long sy, long tol = 6) const override { return Line::HitTest(sx, sy, tol); }
-	ResizeMode GetResizeMode() const override { return ResizeMode::Endpoints; }
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Edge(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Edge>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Edge"; }
 	void SerializeSvg(FILE* fout) const override;
 };
 
-class Cube : public Line, public Rect
+class Cube : public Shape
 {
+private:
+	struct CubeLayout
+	{
+		POINT hull[6] = {};
+		RECT backRect = {};
+		RECT frontRect = {};
+		POINT edges[4][2] = {};
+	};
+
+	CubeLayout CalcLayout() const;
+
 public:
-	bool HitTest(long sx, long sy, long tol = 6) const override { return Shape::HitTest(sx, sy, tol); }
-	ResizeMode GetResizeMode() const override { return ResizeMode::Box; }
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Cube(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Cube>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Cube"; }
 	void SerializeSvg(FILE* fout) const override;
 };
 
-class Cyl : public Line, public Elips
+class Cyl : public Shape
 {
+private:
+	struct CylLayout
+	{
+		long left = 0;
+		long right = 0;
+		long cap1Top = 0;
+		long cap1Bottom = 0;
+		long cap2Top = 0;
+		long cap2Bottom = 0;
+		long bodyTop = 0;
+		long bodyBottom = 0;
+	};
+
+	CylLayout CalcLayout() const;
+
 public:
-	bool HitTest(long sx, long sy, long tol = 6) const override { return Shape::HitTest(sx, sy, tol); }
-	ResizeMode GetResizeMode() const override { return ResizeMode::Box; }
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Cyl(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Cyl>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Cylinder"; }
 	void SerializeSvg(FILE* fout) const override;
 };
 
 // Текст
 
-class Text : virtual public Shape
+class Text : public Shape
 {
 private:
 	std::wstring text;
+
 public:
 	void SetText(const std::wstring& str) { text = str; }
 	const std::wstring& GetText() const { return text; }
 
-	void Show(HDC hdc) override;
-	Shape* Clone() const override { return new Text(*this); }
+	void Show(HDC hdc) const override;
+	std::unique_ptr<Shape> Clone() const override { return std::make_unique<Text>(*this); }
 	const WCHAR* GetTypeName() const override { return L"Text"; }
 
 	void Serialize(FILE* fout) const override;

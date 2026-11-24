@@ -2,118 +2,68 @@
 #include "framework.h"
 #include "viewer.h"
 
-Viewer::~Viewer()
+void Viewer::AddShape(std::unique_ptr<Shape> shape)
 {
-	Clear();
+	if (shape)
+		shapes.push_back(std::move(shape));
 }
 
-void Viewer::PushToArray(Shape**& arr, int& count, int& capacity, Shape* p)
+std::unique_ptr<Shape> Viewer::RemoveLastShape()
 {
-	if (!p) return;
+	if (shapes.empty()) return nullptr;
 
-	if (count >= capacity)
-	{
-		int newCapacity = (capacity > 0) ? capacity * 2 : INIT_SHAPES_CAPACITY;
-		if (newCapacity <= count)
-			newCapacity = count + 1;
+	auto last = std::move(shapes.back());
+	shapes.pop_back();
 
-		Shape** newArr = new Shape * [newCapacity]();
+	if (selectedIndex >= static_cast<int>(shapes.size()))
+		selectedIndex = -1;
 
-		for (int i = 0; i < count && i < newCapacity; i++)
-			newArr[i] = arr[i];
-
-		delete[] arr;
-		arr = newArr;
-		capacity = newCapacity;
-	}
-
-	if (arr && count >= 0 && count < capacity)
-		arr[count++] = p;
-	else
-		delete p;
-}
-
-Shape* Viewer::PopFromArray(Shape** arr, int& count)
-{
-	if (!arr || count <= 0) return nullptr;
-
-	Shape* last = arr[--count];
-	arr[count] = nullptr;
 	return last;
 }
 
-void Viewer::ClearRedo()
+void Viewer::ReplaceShapeAt(int index, std::unique_ptr<Shape> shape)
 {
-	for (int i = 0; i < redoCount; i++)
-		delete redoShapes[i];
+	if (!shape || index < 0 || index >= static_cast<int>(shapes.size()))
+		return;
 
-	delete[] redoShapes;
-	redoShapes = nullptr;
-	redoCount = redoCapacity = 0;
-}
-
-void Viewer::AddShape(Shape* p, bool clearRedoHistory)
-{
-	if (!p) return;
-
-	if (clearRedoHistory)
-		ClearRedo();
-
-	PushToArray(shapes, shapesCount, shapesCapacity, p);
+	ClearSelection();
+	shape->SetSelected(false);
+	shapes[index] = std::move(shape);
 }
 
 void Viewer::Clear()
 {
-	for (int i = 0; i < shapesCount; i++)
-		delete shapes[i];
-
-	delete[] shapes;
-	shapes = nullptr;
-	shapesCount = shapesCapacity = 0;
+	shapes.clear();
 	selectedIndex = -1;
-
-	ClearRedo();
-}
-
-bool Viewer::Undo()
-{
-	Shape* last = PopFromArray(shapes, shapesCount);
-	if (!last) return false;
-
-	last->SetSelected(false);
-	if (shapesCount <= selectedIndex)
-		selectedIndex = -1;
-
-	PushToArray(redoShapes, redoCount, redoCapacity, last);
-	return true;
-}
-
-bool Viewer::Redo()
-{
-	Shape* restored = PopFromArray(redoShapes, redoCount);
-	if (!restored) return false;
-
-	restored->SetSelected(false);
-	PushToArray(shapes, shapesCount, shapesCapacity, restored);
-	return true;
 }
 
 void Viewer::ClearSelection()
 {
-	for (int i = 0; i < shapesCount; i++)
+	for (auto& shape : shapes)
 	{
-		if (shapes[i])
-			shapes[i]->SetSelected(false);
+		if (shape)
+			shape->SetSelected(false);
 	}
 	selectedIndex = -1;
+}
+
+int Viewer::FindShapeIndex(const Shape* target) const
+{
+	if (!target) return -1;
+	for (int i = 0; i < static_cast<int>(shapes.size()); ++i)
+	{
+		if (shapes[i].get() == target)
+			return i;
+	}
+	return -1;
 }
 
 int Viewer::SelectAt(long sceneX, long sceneY)
 {
 	ClearSelection();
 
-	// перевіряє з останнього об'єкта
-	for (int i = shapesCount - 1; i >= 0; i--)
+	// Перевіряємо з останньої (верхньої) фігури
+	for (int i = static_cast<int>(shapes.size()) - 1; i >= 0; --i)
 	{
 		if (shapes[i] && shapes[i]->HitTest(sceneX, sceneY))
 		{
@@ -128,18 +78,16 @@ int Viewer::SelectAt(long sceneX, long sceneY)
 
 Shape* Viewer::GetSelectedShape() const
 {
-	if (selectedIndex >= 0 && selectedIndex < shapesCount)
-		return shapes[selectedIndex];
-	return nullptr;
+	return GetShape(selectedIndex);
 }
 
 bool Viewer::MoveSelectedBy(long dx, long dy)
 {
-	Shape* pSel = GetSelectedShape();
-	if (!pSel || (dx == 0 && dy == 0))
+	Shape* sel = GetSelectedShape();
+	if (!sel || (dx == 0 && dy == 0))
 		return false;
 
-	pSel->MoveBy(dx, dy);
+	sel->MoveBy(dx, dy);
 	return true;
 }
 
@@ -168,8 +116,8 @@ void Viewer::UpdateScrollBars(HWND hWnd)
 	if (clientW < 0) clientW = 0;
 	if (clientH < 0) clientH = 0;
 
-	int maxScrollX = (SCENE_WIDTH > clientW) ? (SCENE_WIDTH - clientW) : 0;
-	int maxScrollY = (SCENE_HEIGHT > clientH) ? (SCENE_HEIGHT - clientH) : 0;
+	const int maxScrollX = (kSceneWidth > clientW) ? (kSceneWidth - clientW) : 0;
+	const int maxScrollY = (kSceneHeight > clientH) ? (kSceneHeight - clientH) : 0;
 
 	if (scrollX > maxScrollX) scrollX = maxScrollX;
 	if (scrollX < 0) scrollX = 0;
@@ -181,14 +129,14 @@ void Viewer::UpdateScrollBars(HWND hWnd)
 	si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
 
 	si.nMin = 0;
-	si.nMax = SCENE_WIDTH - 1;
-	si.nPage = (UINT)clientW;
+	si.nMax = kSceneWidth - 1;
+	si.nPage = static_cast<UINT>(clientW);
 	si.nPos = scrollX;
 	SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
 
 	si.nMin = 0;
-	si.nMax = SCENE_HEIGHT - 1;
-	si.nPage = (UINT)clientH;
+	si.nMax = kSceneHeight - 1;
+	si.nPage = static_cast<UINT>(clientH);
 	si.nPos = scrollY;
 	SetScrollInfo(hWnd, SB_VERT, &si, TRUE);
 }
@@ -201,8 +149,8 @@ void Viewer::HandleScroll(HWND hWnd, int barType, WPARAM wParam, int& scrollPos,
 	GetScrollInfo(hWnd, barType, &si);
 
 	int newPos = scrollPos;
-	const int lineStep = 20;
-	int pageStep = (pageSize > lineStep) ? (pageSize - lineStep) : lineStep;
+	constexpr int lineStep = 20;
+	const int pageStep = (pageSize > lineStep) ? (pageSize - lineStep) : lineStep;
 
 	switch (LOWORD(wParam))
 	{
@@ -220,7 +168,7 @@ void Viewer::HandleScroll(HWND hWnd, int barType, WPARAM wParam, int& scrollPos,
 		return;
 	}
 
-	int maxPos = (maxSize > pageSize) ? (maxSize - pageSize) : 0;
+	const int maxPos = (maxSize > pageSize) ? (maxSize - pageSize) : 0;
 	if (newPos < 0) newPos = 0;
 	if (newPos > maxPos) newPos = maxPos;
 
@@ -238,9 +186,9 @@ void Viewer::OnHScroll(HWND hWnd, WPARAM wParam)
 {
 	RECT rc = {};
 	GetClientRect(hWnd, &rc);
-	int clientW = rc.right - rc.left;
+	const int clientW = rc.right - rc.left;
 
-	HandleScroll(hWnd, SB_HORZ, wParam, scrollX, clientW, SCENE_WIDTH);
+	HandleScroll(hWnd, SB_HORZ, wParam, scrollX, clientW, kSceneWidth);
 }
 
 void Viewer::OnVScroll(HWND hWnd, WPARAM wParam)
@@ -250,13 +198,13 @@ void Viewer::OnVScroll(HWND hWnd, WPARAM wParam)
 	int clientH = (rc.bottom - rc.top) - topOffset;
 	if (clientH < 0) clientH = 0;
 
-	HandleScroll(hWnd, SB_VERT, wParam, scrollY, clientH, SCENE_HEIGHT);
+	HandleScroll(hWnd, SB_VERT, wParam, scrollY, clientH, kSceneHeight);
 }
 
 void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 {
-	int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-	int step = -(delta / WHEEL_DELTA) * 40;
+	const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+	const int step = -(delta / WHEEL_DELTA) * 40;
 	if (step == 0) return;
 
 	RECT rc = {};
@@ -264,8 +212,8 @@ void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 
 	if (LOWORD(wParam) & MK_SHIFT)
 	{
-		int clientW = rc.right - rc.left;
-		int maxPos = (SCENE_WIDTH > clientW) ? (SCENE_WIDTH - clientW) : 0;
+		const int clientW = rc.right - rc.left;
+		const int maxPos = (kSceneWidth > clientW) ? (kSceneWidth - clientW) : 0;
 		int newPos = scrollX + step;
 		if (newPos < 0) newPos = 0;
 		if (newPos > maxPos) newPos = maxPos;
@@ -281,7 +229,7 @@ void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 	{
 		int clientH = (rc.bottom - rc.top) - topOffset;
 		if (clientH < 0) clientH = 0;
-		int maxPos = (SCENE_HEIGHT > clientH) ? (SCENE_HEIGHT - clientH) : 0;
+		const int maxPos = (kSceneHeight > clientH) ? (kSceneHeight - clientH) : 0;
 		int newPos = scrollY + step;
 		if (newPos < 0) newPos = 0;
 		if (newPos > maxPos) newPos = maxPos;
@@ -303,9 +251,9 @@ void Viewer::ScreenToScene(long clientX, long clientY, long& sceneX, long& scene
 	if (clampToScene)
 	{
 		if (sceneX < 0) sceneX = 0;
-		if (sceneX > SCENE_WIDTH) sceneX = SCENE_WIDTH;
+		if (sceneX > kSceneWidth) sceneX = kSceneWidth;
 		if (sceneY < 0) sceneY = 0;
-		if (sceneY > SCENE_HEIGHT) sceneY = SCENE_HEIGHT;
+		if (sceneY > kSceneHeight) sceneY = kSceneHeight;
 	}
 }
 
@@ -325,14 +273,14 @@ void Viewer::Render(HWND hWnd) const
 
 	RECT rc = {};
 	GetClientRect(hWnd, &rc);
-	int width = rc.right - rc.left;
-	int height = rc.bottom - rc.top;
+	const int width = rc.right - rc.left;
+	const int height = rc.bottom - rc.top;
 
 	if (width > 0 && height > topOffset)
 	{
 		HDC memDC = CreateCompatibleDC(hdc);
 		HBITMAP memBmp = CreateCompatibleBitmap(hdc, width, height);
-		HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, memBmp);
+		HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDC, memBmp));
 
 		HBRUSH hOuterBrush = CreateSolidBrush(RGB(235, 235, 235));
 		FillRect(memDC, &rc, hOuterBrush);
@@ -341,19 +289,19 @@ void Viewer::Render(HWND hWnd) const
 		BeginCanvasDraw(memDC, hWnd);
 
 		HPEN hBorderPen = CreatePen(PS_SOLID, 1, RGB(180, 180, 180));
-		HPEN hOldPen = (HPEN)SelectObject(memDC, hBorderPen);
-		HBRUSH hOldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(WHITE_BRUSH));
+		HPEN hOldPen = static_cast<HPEN>(SelectObject(memDC, hBorderPen));
+		HBRUSH hOldBrush = static_cast<HBRUSH>(SelectObject(memDC, GetStockObject(WHITE_BRUSH)));
 
-		Rectangle(memDC, 0, 0, SCENE_WIDTH, SCENE_HEIGHT);
+		Rectangle(memDC, 0, 0, kSceneWidth, kSceneHeight);
 
 		SelectObject(memDC, hOldBrush);
 		SelectObject(memDC, hOldPen);
 		DeleteObject(hBorderPen);
 
-		for (int i = 0; i < shapesCount; i++)
+		for (const auto& shape : shapes)
 		{
-			if (shapes[i])
-				shapes[i]->Show(memDC);
+			if (shape)
+				shape->Show(memDC);
 		}
 
 		SetViewportOrgEx(memDC, 0, 0, nullptr);

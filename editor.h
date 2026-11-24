@@ -5,18 +5,16 @@
 #include "toolbar.h"
 #include "viewer.h"
 #include "files.h"
-
-#define IDC_INPLACE_EDIT 2001
-#define IDM_TEXT_COMMIT  40001
-#define IDM_TEXT_CANCEL  40002
+#include "history.h"
+#include "text.h"
 
 class Editor
 {
 private:
-	static Editor* p_instance;
+	static Editor* instance;
 
-	Editor() {}
-	~Editor();
+	Editor() = default;
+	~Editor() = default;
 
 	Editor(const Editor&) = delete;
 	Editor& operator=(const Editor&) = delete;
@@ -24,19 +22,21 @@ private:
 	Toolbar toolbar;
 	Viewer viewer;
 	Files files;
+	CommandHistory history;
+	InplaceTextEditor textEditor;
 
-	Shape* pcurrent = nullptr;
+	std::unique_ptr<Shape> currentShape;
 	UINT currentToolId = 0;
 
 	bool isDrawing = false;
 	bool rubberDrawn = false;
 	bool isMoving = false;
-	bool movedAny = false;
 	bool isResizing = false;
+	bool changedDuringDrag = false;
 	int resizeHandle = -1;
-	Shape* resizeOrig = nullptr;
+	std::unique_ptr<Shape> dragOrigState;
 
-	long xstart = 0, ystart = 0;
+	long xStart = 0, yStart = 0;
 	long lastMoveX = 0, lastMoveY = 0;
 
 	COLORREF borderColor = RGB(0, 0, 0);
@@ -46,15 +46,14 @@ private:
 	int borderWidth = 1;
 	COLORREF customColors[16] = {};
 
-	HWND hEdit = nullptr;
-	HFONT hEditFont = nullptr;
-	Text* editTarget = nullptr;
-	RECT editSceneRect = {};
-
 	void GetSceneMousePos(LPARAM lParam, long& sx, long& sy) const;
-	void ApplyCurrentStyle(Shape* pShape) const;
-	void StartTool(Shape* pShape, UINT cmdId);
+	void ApplyCurrentStyle(Shape* shape) const;
+	void StartTool(std::unique_ptr<Shape> shape, UINT cmdId);
 	void SelectTool(UINT cmdId);
+	void FinishTextEdit(HWND hWnd, bool commit);
+
+	template <typename MutateFn>
+	void ApplyStyleChange(HWND hWnd, MutateFn mutate);
 
 	void ChooseBorderColor(HWND hWnd);
 	void ChooseFillColor(HWND hWnd);
@@ -62,13 +61,10 @@ private:
 	void ToggleNoFill(HWND hWnd);
 	void SetBorderWidth(HWND hWnd, int width);
 
-	void BeginTextEdit(HWND hWnd, Text* target, long l, long t, long r, long b);
-	void EndTextEdit(HWND hWnd, bool commit);
-
 public:
-	static Editor* getInstance();
+	static Editor* GetInstance();
 
-	bool IsTextEditing() const { return hEdit != nullptr; }
+	bool IsTextEditing() const { return textEditor.IsActive(); }
 
 	void OnCreate(HWND hWnd);
 	void OnSize(HWND hWnd);

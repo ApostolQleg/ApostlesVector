@@ -1,88 +1,69 @@
 #include "pch.h"
 #include "framework.h"
 #include "toolbar.h"
+#include "tools.h"
 
-#define IDC_MAIN_TOOLBAR 10001
-
-struct ToolItem
-{
-	UINT id;
-	int bitmapIndex;
-	const WCHAR* tooltip;
-};
-
-static const ToolItem toolbarItems[] = {
-	{ IDM_SELECT,      0,  L"Select" },
-	{ IDM_MOVE,        1,  L"Move" },
-	{ IDM_NODE,        2,  L"Node" },
-	{ IDM_EDGE,        3,  L"Edge" },
-	{ IDM_LINE,        4,  L"Line" },
-	{ IDM_ARROW,       5,  L"Arrow" },
-	{ IDM_TRNGL,       6,  L"Triangle" },
-	{ IDM_RIGHT_TRNGL, 7,  L"Right Triangle" },
-	{ IDM_RECT,        8,  L"Rectangle" },
-	{ IDM_ROMB,        9,  L"Rhombus" },
-	{ IDM_PENT,        10, L"Pentagon" },
-	{ IDM_HEX,         11, L"Hexagon" },
-	{ IDM_ELIPS,       12, L"Ellipse" },
-	{ IDM_CUBE,        13, L"Cube" },
-	{ IDM_CYL,         14, L"Cylinder" },
-	{ IDM_TEXT,        15, L"Text" }
-};
-
-static constexpr int toolbarItemsCount = sizeof(toolbarItems) / sizeof(toolbarItems[0]);
+constexpr UINT kMainToolbarId = 10001;
 
 void Toolbar::Create(HWND hWndParent, HINSTANCE hInst)
 {
-	hWndToolbar = CreateWindowExW(
+	hToolbar = CreateWindowExW(
 		0, TOOLBARCLASSNAMEW, nullptr,
 		WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | CCS_TOP | CCS_NODIVIDER |
 		TBSTYLE_TOOLTIPS | TBSTYLE_FLAT,
-		0, 0, 0, 0, hWndParent, (HMENU)IDC_MAIN_TOOLBAR, hInst, nullptr);
-	if (!hWndToolbar) return;
+		0, 0, 0, 0, hWndParent, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kMainToolbarId)), hInst, nullptr);
+	if (!hToolbar) return;
 
-	SendMessage(hWndToolbar, TB_BUTTONSTRUCTSIZE, (WPARAM)sizeof(TBBUTTON), 0);
-	SendMessage(hWndToolbar, TB_SETEXTENDEDSTYLE, 0,
+	SendMessageW(hToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+	SendMessageW(hToolbar, TB_SETEXTENDEDSTYLE, 0,
 		TBSTYLE_EX_DOUBLEBUFFER | TBSTYLE_EX_HIDECLIPPEDBUTTONS);
-	SendMessage(hWndToolbar, TB_SETBITMAPSIZE, 0, MAKELPARAM(48, 48));
-	SendMessage(hWndToolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(58, 58));
+	SendMessageW(hToolbar, TB_SETBITMAPSIZE, 0, MAKELPARAM(48, 48));
+	SendMessageW(hToolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(58, 58));
+
+	const auto tools = ToolRegistry::GetAll();
 
 	TBADDBITMAP tbab = {};
 	tbab.hInst = hInst;
 	tbab.nID = IDB_TOOLBAR;
-	SendMessage(hWndToolbar, TB_ADDBITMAP, toolbarItemsCount, (LPARAM)&tbab);
+	SendMessageW(hToolbar, TB_ADDBITMAP, static_cast<WPARAM>(tools.size()), reinterpret_cast<LPARAM>(&tbab));
 
-	constexpr int totalButtons = toolbarItemsCount + 1; // + 1 сепаратор
-	TBBUTTON tbb[totalButtons] = {};
-	int n = 0;
+	std::vector<TBBUTTON> buttons;
+	buttons.reserve(tools.size() + 1);
 
-	for (int i = 0; i < toolbarItemsCount; i++)
+	for (size_t i = 0; i < tools.size(); ++i)
 	{
 		if (i == 2)
-			tbb[n++].fsStyle = TBSTYLE_SEP;
+		{
+			TBBUTTON sep = {};
+			sep.fsStyle = TBSTYLE_SEP;
+			buttons.push_back(sep);
+		}
 
-		tbb[n].iBitmap = toolbarItems[i].bitmapIndex;
-		tbb[n].idCommand = toolbarItems[i].id;
-		tbb[n].fsState = TBSTATE_ENABLED;
-		tbb[n].fsStyle = BTNS_CHECKGROUP;
-		n++;
+		TBBUTTON btn = {};
+		btn.iBitmap = tools[i].bitmapIndex;
+		btn.idCommand = static_cast<int>(tools[i].cmdId);
+		btn.fsState = TBSTATE_ENABLED;
+		btn.fsStyle = BTNS_CHECKGROUP;
+		buttons.push_back(btn);
 	}
 
-	SendMessage(hWndToolbar, TB_ADDBUTTONSW, n, (LPARAM)tbb);
-	SendMessage(hWndToolbar, TB_AUTOSIZE, 0, 0);
+	SendMessageW(hToolbar, TB_ADDBUTTONSW,
+		static_cast<WPARAM>(buttons.size()),
+		reinterpret_cast<LPARAM>(buttons.data()));
+	SendMessageW(hToolbar, TB_AUTOSIZE, 0, 0);
 }
 
 void Toolbar::OnSize(HWND hWndParent)
 {
-	if (!hWndToolbar) return;
+	if (!hToolbar) return;
 
 	RECT rcClient = {};
 	RECT rcToolbar = {};
 	GetClientRect(hWndParent, &rcClient);
-	GetWindowRect(hWndToolbar, &rcToolbar);
+	GetWindowRect(hToolbar, &rcToolbar);
 
 	MoveWindow(
-		hWndToolbar,
+		hToolbar,
 		0, 0,
 		rcClient.right - rcClient.left,
 		rcToolbar.bottom - rcToolbar.top,
@@ -92,51 +73,41 @@ void Toolbar::OnSize(HWND hWndParent)
 
 int Toolbar::GetHeight() const
 {
-	if (!hWndToolbar) return 0;
+	if (!hToolbar) return 0;
 
 	RECT rc = {};
-	GetWindowRect(hWndToolbar, &rc);
+	GetWindowRect(hToolbar, &rc);
 	return rc.bottom - rc.top;
 }
 
 void Toolbar::SetActiveTool(UINT cmdId)
 {
-	if (!hWndToolbar) return;
+	if (!hToolbar) return;
 
-	for (int i = 0; i < toolbarItemsCount; i++)
+	for (const auto& tool : ToolRegistry::GetAll())
 	{
-		UINT id = toolbarItems[i].id;
-		SendMessage(hWndToolbar, TB_CHECKBUTTON, id, MAKELPARAM(id == cmdId, 0));
+		SendMessageW(hToolbar, TB_CHECKBUTTON, tool.cmdId, MAKELPARAM(tool.cmdId == cmdId, 0));
 	}
 }
 
 bool Toolbar::IsToolId(UINT cmdId) const
 {
-	for (int i = 0; i < toolbarItemsCount; i++)
-	{
-		if (toolbarItems[i].id == cmdId)
-			return true;
-	}
-	return false;
+	return ToolRegistry::IsToolId(cmdId);
 }
 
 LRESULT Toolbar::OnNotify(LPARAM lParam)
 {
-	LPNMHDR pnmh = (LPNMHDR)lParam;
+	const auto* pnmh = reinterpret_cast<LPNMHDR>(lParam);
 	if (!pnmh) return 0;
 
 	if (pnmh->code == TTN_NEEDTEXTW)
 	{
-		LPTOOLTIPTEXTW lpttt = (LPTOOLTIPTEXTW)lParam;
-		UINT id = (UINT)lpttt->hdr.idFrom;
-
-		for (int i = 0; i < toolbarItemsCount; i++)
+		auto* lpttt = reinterpret_cast<LPTOOLTIPTEXTW>(lParam);
+		const UINT id = static_cast<UINT>(lpttt->hdr.idFrom);
+		if (const ToolDescriptor* tool = ToolRegistry::FindByCmdId(id))
 		{
-			if (toolbarItems[i].id == id)
-			{
-				wcscpy_s(lpttt->szText, _countof(lpttt->szText), toolbarItems[i].tooltip);
-				return 0;
-			}
+			wcscpy_s(lpttt->szText, _countof(lpttt->szText), tool->tooltip);
+			return 0;
 		}
 	}
 

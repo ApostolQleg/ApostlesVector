@@ -155,17 +155,21 @@
     <ClInclude Include="editor.h" />
     <ClInclude Include="files.h" />
     <ClInclude Include="framework.h" />
+    <ClInclude Include="history.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="shape.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="text.h" />
     <ClInclude Include="toolbar.h" />
+    <ClInclude Include="tools.h" />
     <ClInclude Include="viewer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ApostlesVector.cpp" />
     <ClCompile Include="editor.cpp" />
     <ClCompile Include="files.cpp" />
+    <ClCompile Include="history.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -173,7 +177,9 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="shape.cpp" />
+    <ClCompile Include="text.cpp" />
     <ClCompile Include="toolbar.cpp" />
+    <ClCompile Include="tools.cpp" />
     <ClCompile Include="viewer.cpp" />
   </ItemGroup>
   <ItemGroup>

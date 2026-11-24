@@ -1,11 +1,9 @@
 #pragma once
 
-#include "Resource.h"
-
 class Toolbar
 {
 private:
-	HWND hWndToolbar = nullptr;
+	HWND hToolbar = nullptr;
 
 public:
 	void Create(HWND hWndParent, HINSTANCE hInst);
@@ -14,6 +12,5 @@ public:
 
 	LRESULT OnNotify(LPARAM lParam);
 	void SetActiveTool(UINT cmdId);
-
 	bool IsToolId(UINT cmdId) const;
 };

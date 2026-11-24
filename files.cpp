@@ -3,14 +3,15 @@
 #include "files.h"
 #include "viewer.h"
 #include "shape.h"
+#include "tools.h"
 
-#define FILE_LINE_CHUNK 2048
+constexpr size_t kFileLineChunk = 2048;
 
 std::wstring Files::ExtractFileName(const std::wstring& path) const
 {
 	if (path.empty()) return L"Untitled";
 
-	size_t pos = path.find_last_of(L"\\/");
+	const size_t pos = path.find_last_of(L"\\/");
 	if (pos == std::wstring::npos)
 		return path;
 
@@ -41,7 +42,7 @@ bool Files::ConfirmDiscardChanges(HWND hWnd, Viewer& viewer)
 {
 	if (!isDirty) return true;
 
-	int res = MessageBoxW(
+	const int res = MessageBoxW(
 		hWnd,
 		L"Save changes to the current scene?",
 		L"ApostlesVector",
@@ -63,15 +64,14 @@ bool Files::WriteToFile(HWND hWnd, const std::wstring& path, const Viewer& viewe
 		return false;
 	}
 
-	int count = viewer.GetCount();
+	const int count = viewer.GetCount();
 	fwprintf(fout, L"APOSTLES_VECTOR 1.1\n");
 	fwprintf(fout, L"COUNT %d\n", count);
 
-	for (int i = 0; i < count; i++)
+	for (int i = 0; i < count; ++i)
 	{
-		Shape* pShape = viewer.GetShape(i);
-		if (pShape)
-			pShape->Serialize(fout);
+		if (const Shape* shape = viewer.GetShape(i))
+			shape->Serialize(fout);
 	}
 
 	fclose(fout);
@@ -87,14 +87,14 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 		return false;
 	}
 
-	std::vector<Shape*> loadedShapes;
+	std::vector<std::unique_ptr<Shape>> loadedShapes;
 	bool hasHeader = false;
 	bool parseOk = true;
 
-	WCHAR chunk[FILE_LINE_CHUNK] = {};
+	WCHAR chunk[kFileLineChunk] = {};
 	std::wstring lineStr;
 
-	while (fgetws(chunk, _countof(chunk), fin))
+	while (fgetws(chunk, static_cast<int>(_countof(chunk)), fin))
 	{
 		lineStr += chunk;
 		if (!lineStr.empty() && lineStr.back() != L'\n' && !feof(fin))
@@ -111,7 +111,7 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 
 		WCHAR typeName[64] = {};
 		int offset = 0;
-		if (swscanf_s(lineStr.c_str(), L"%63s%n", typeName, (unsigned)_countof(typeName), &offset) != 1)
+		if (swscanf_s(lineStr.c_str(), L"%63s%n", typeName, static_cast<unsigned>(_countof(typeName)), &offset) != 1)
 		{
 			parseOk = false;
 			break;
@@ -129,15 +129,14 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 			continue;
 		}
 
-		Shape* pShape = Shape::CreateByName(typeName);
-		if (!pShape || !pShape->Deserialize(lineStr.c_str() + offset))
+		auto shape = ToolRegistry::CreateShapeByName(typeName);
+		if (!shape || !shape->Deserialize(lineStr.c_str() + offset))
 		{
-			delete pShape;
 			parseOk = false;
 			break;
 		}
 
-		loadedShapes.push_back(pShape);
+		loadedShapes.push_back(std::move(shape));
 		lineStr.clear();
 	}
 
@@ -145,15 +144,13 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 
 	if (!parseOk || !hasHeader)
 	{
-		for (Shape* s : loadedShapes)
-			delete s;
 		MessageBoxW(hWnd, L"The scene file is corrupted or has an invalid format.", L"File Error", MB_OK | MB_ICONERROR);
 		return false;
 	}
 
 	viewer.Clear();
-	for (Shape* s : loadedShapes)
-		viewer.AddShape(s, false);
+	for (auto& shape : loadedShapes)
+		viewer.AddShape(std::move(shape));
 
 	return true;
 }
@@ -169,14 +166,13 @@ bool Files::WriteSvgToFile(HWND hWnd, const std::wstring& path, const Viewer& vi
 
 	fwprintf(fout, L"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
 	fwprintf(fout, L"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\">\n",
-		SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH, SCENE_HEIGHT);
+		kSceneWidth, kSceneHeight, kSceneWidth, kSceneHeight);
 
-	int count = viewer.GetCount();
-	for (int i = 0; i < count; i++)
+	const int count = viewer.GetCount();
+	for (int i = 0; i < count; ++i)
 	{
-		Shape* pShape = viewer.GetShape(i);
-		if (pShape)
-			pShape->SerializeSvg(fout);
+		if (const Shape* shape = viewer.GetShape(i))
+			shape->SerializeSvg(fout);
 	}
 
 	fwprintf(fout, L"</svg>\n");
