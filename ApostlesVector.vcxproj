@@ -152,6 +152,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="ApostlesVector.h" />
+    <ClInclude Include="editor.h" />
     <ClInclude Include="files.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="pch.h" />
@@ -163,6 +164,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ApostlesVector.cpp" />
+    <ClCompile Include="editor.cpp" />
     <ClCompile Include="files.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
