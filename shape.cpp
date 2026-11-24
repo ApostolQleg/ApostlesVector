@@ -524,29 +524,28 @@ void Edge::SerializeSvg(FILE* fout) const
 
 void Cube::Show(HDC hdc)
 {
-	long xold1 = x1, yold1 = y1;
-	long xold2 = x2, yold2 = y2;
+	const long ax = x1, ay = y1;
+	const long bx = x2, by = y2;
 
-	long dx = x2 - x1;
-	long dy = y2 - y1;
+	long dx = bx - ax;
+	long dy = by - ay;
 	long absW = (dx < 0) ? -dx : dx;
 	long absH = (dy < 0) ? -dy : dy;
 	long depth = ((absW < absH) ? absW : absH) / 3;
 	long sx = (dx >= 0) ? depth : -depth;
 	long sy = (dy >= 0) ? depth : -depth;
 
-	// Весь куб вписаний у [x1, x2] x [y1, y2]:
-	// передня грань: (x1, y1) .. (x2 - sx, y2 - sy)
-	// задня грань:   (x1 + sx, y1 + sy) .. (x2, y2)
+	// передня грань: (ax, ay) .. (bx - sx, by - sy)
+	// задня грань:   (ax + sx, ay + sy) .. (bx, by)
 	if (hasFill && !rubber)
 	{
 		POINT hull[6] = {
-			{ x1, y1 },
-			{ x2 - sx, y1 },
-			{ x2, y1 + sy },
-			{ x2, y2 },
-			{ x1 + sx, y2 },
-			{ x1, y2 - sy }
+			{ ax,      ay },
+			{ bx - sx, ay },
+			{ bx,      ay + sy },
+			{ bx,      by },
+			{ ax + sx, by },
+			{ ax,      by - sy }
 		};
 
 		HPEN hFillPen = CreatePen(PS_SOLID, 1, fillColor);
@@ -570,24 +569,24 @@ void Cube::Show(HDC hdc)
 		selected = false;
 
 		// Задня грань
-		Set(x1 + sx, y1 + sy, x2, y2);
+		Set(ax + sx, ay + sy, bx, by);
 		Rect::Show(hdc);
 
-		// Чотири ребра між передньою та задньою гранями
-		Set(x1, y1, x1 + sx, y1 + sy);           Line::Show(hdc);
-		Set(x2 - sx, y1, x2, y1 + sy);           Line::Show(hdc);
-		Set(x2 - sx, y2 - sy, x2, y2);           Line::Show(hdc);
-		Set(x1, y2 - sy, x1 + sx, y2);           Line::Show(hdc);
+		// Чотири ребра
+		Set(ax, ay, ax + sx, ay + sy); Line::Show(hdc);
+		Set(bx - sx, ay, bx, ay + sy); Line::Show(hdc);
+		Set(bx - sx, by - sy, bx, by);      Line::Show(hdc);
+		Set(ax, by - sy, ax + sx, by);      Line::Show(hdc);
 
 		// Передня грань
-		Set(x1, y1, x2 - sx, y2 - sy);
+		Set(ax, ay, bx - sx, by - sy);
 		Rect::Show(hdc);
 
 		hasFill = oldFill;
 		selected = oldSel;
 	}
 
-	Set(xold1, yold1, xold2, yold2);
+	Set(ax, ay, bx, by);
 	DrawSelection(hdc);
 }
 
