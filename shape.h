@@ -11,32 +11,48 @@ protected:
 
 	COLORREF borderColor = RGB(0, 0, 0);
 	COLORREF fillColor = RGB(255, 255, 255);
+	bool hasBorder = true;
 	bool hasFill = false;
 	int borderWidth = 1;
 
 	bool rubber = false;
+	bool selected = false;
 
 	HPEN CreateBorderPen() const;
+	HBRUSH CreateFillBrush(bool& createdBrush) const;
 	void NormalizeCoords(long& l, long& t, long& r, long& b) const;
 
 public:
 	virtual ~Shape() {}
 
 	void Set(long xstart, long ystart, long xend, long yend);
-	void SetStyle(COLORREF border, COLORREF fill, bool filled, int width);
+	void MoveBy(long dx, long dy);
+	bool HitTest(long sx, long sy, long tolerance = 6) const;
+
+	void SetStyle(COLORREF border, COLORREF fill, bool borderEnabled, bool filled, int width);
 	void SetRubber(bool r) { rubber = r; }
+	void SetSelected(bool s) { selected = s; }
+
+	long GetX1() const { return x1; }
+	long GetY1() const { return y1; }
+	long GetX2() const { return x2; }
+	long GetY2() const { return y2; }
 
 	COLORREF GetBorderColor() const { return borderColor; }
 	COLORREF GetFillColor() const { return fillColor; }
+	bool HasBorder() const { return hasBorder; }
 	bool IsFilled() const { return hasFill; }
 	int GetBorderWidth() const { return borderWidth; }
+	bool IsSelected() const { return selected; }
 
 	virtual void Show(HDC hdc) = 0;
+	virtual void DrawSelection(HDC hdc) const;
 	virtual Shape* Clone() const = 0;
 	virtual const WCHAR* GetTypeName() const = 0;
 
 	virtual void Serialize(FILE* fout) const;
 	virtual bool Deserialize(const WCHAR* params);
+	virtual void SerializeSvg(FILE* fout) const;
 
 	static Shape* CreateByName(const WCHAR* typeName);
 };
@@ -49,6 +65,7 @@ public:
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Line(*this); }
 	const WCHAR* GetTypeName() const override { return L"Line"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 class Rect : virtual public Shape
@@ -57,6 +74,7 @@ public:
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Rect(*this); }
 	const WCHAR* GetTypeName() const override { return L"Rectangle"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 class Elips : virtual public Shape
@@ -65,16 +83,18 @@ public:
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Elips(*this); }
 	const WCHAR* GetTypeName() const override { return L"Ellipse"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 // Багатокутники
 
-class Poly : virtual public Shape // абстрактний клас для полігонів
+class Poly : virtual public Shape
 {
 protected:
 	virtual void CalcVertices(POINT* pts, int& count) const = 0;
 public:
 	void Show(HDC hdc) override;
+	void SerializeSvg(FILE* fout) const override;
 };
 
 class Trngl : public Poly
@@ -128,8 +148,10 @@ class Node : public Elips
 {
 public:
 	void Show(HDC hdc) override;
+	void DrawSelection(HDC hdc) const override;
 	Shape* Clone() const override { return new Node(*this); }
 	const WCHAR* GetTypeName() const override { return L"Node"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 class Arrow : public Line
@@ -138,6 +160,7 @@ public:
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Arrow(*this); }
 	const WCHAR* GetTypeName() const override { return L"Arrow"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 class Edge : public Line, public Elips
@@ -146,6 +169,7 @@ public:
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Edge(*this); }
 	const WCHAR* GetTypeName() const override { return L"Edge"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 class Cube : public Line, public Rect
@@ -154,6 +178,7 @@ public:
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Cube(*this); }
 	const WCHAR* GetTypeName() const override { return L"Cube"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 class Cyl : public Line, public Elips
@@ -162,6 +187,7 @@ public:
 	void Show(HDC hdc) override;
 	Shape* Clone() const override { return new Cyl(*this); }
 	const WCHAR* GetTypeName() const override { return L"Cylinder"; }
+	void SerializeSvg(FILE* fout) const override;
 };
 
 // Текст
@@ -180,4 +206,5 @@ public:
 
 	void Serialize(FILE* fout) const override;
 	bool Deserialize(const WCHAR* params) override;
+	void SerializeSvg(FILE* fout) const override;
 };

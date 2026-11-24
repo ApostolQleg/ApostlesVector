@@ -64,7 +64,7 @@ bool Files::WriteToFile(HWND hWnd, const std::wstring& path, const Viewer& viewe
 	}
 
 	int count = viewer.GetCount();
-	fwprintf(fout, L"APOSTLES_VECTOR 1.0\n");
+	fwprintf(fout, L"APOSTLES_VECTOR 1.1\n");
 	fwprintf(fout, L"COUNT %d\n", count);
 
 	for (int i = 0; i < count; i++)
@@ -92,7 +92,6 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 	WCHAR line[FILE_LINE_BUFFER] = {};
 	while (fgetws(line, FILE_LINE_BUFFER, fin))
 	{
-		// прибирає символи перенесення рядка в кінці
 		size_t len = wcslen(line);
 		while (len > 0 && (line[len - 1] == L'\n' || line[len - 1] == L'\r'))
 			line[--len] = L'\0';
@@ -118,6 +117,32 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 	}
 
 	fclose(fin);
+	return true;
+}
+
+bool Files::WriteSvgToFile(HWND hWnd, const std::wstring& path, const Viewer& viewer) const
+{
+	FILE* fout = nullptr;
+	if (_wfopen_s(&fout, path.c_str(), L"wt, ccs=UTF-8") != 0 || !fout)
+	{
+		MessageBoxW(hWnd, L"Failed to export SVG file.", L"SVG Export Error", MB_OK | MB_ICONERROR);
+		return false;
+	}
+
+	fwprintf(fout, L"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+	fwprintf(fout, L"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\">\n",
+		SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH, SCENE_HEIGHT);
+
+	int count = viewer.GetCount();
+	for (int i = 0; i < count; i++)
+	{
+		Shape* pShape = viewer.GetShape(i);
+		if (pShape)
+			pShape->SerializeSvg(fout);
+	}
+
+	fwprintf(fout, L"</svg>\n");
+	fclose(fout);
 	return true;
 }
 
@@ -209,4 +234,23 @@ bool Files::SaveAs(HWND hWnd, const Viewer& viewer)
 	isDirty = false;
 	UpdateWindowTitle(hWnd);
 	return true;
+}
+
+bool Files::ExportSvg(HWND hWnd, const Viewer& viewer) const
+{
+	WCHAR fileBuf[MAX_PATH] = L"scene.svg";
+
+	OPENFILENAMEW ofn = {};
+	ofn.lStructSize = sizeof(OPENFILENAMEW);
+	ofn.hwndOwner = hWnd;
+	ofn.lpstrFilter = L"Scalable Vector Graphics (*.svg)\0*.svg\0All Files (*.*)\0*.*\0";
+	ofn.lpstrFile = fileBuf;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrDefExt = L"svg";
+	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+
+	if (!GetSaveFileNameW(&ofn))
+		return false;
+
+	return WriteSvgToFile(hWnd, fileBuf, viewer);
 }

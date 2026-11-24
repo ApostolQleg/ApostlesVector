@@ -70,6 +70,7 @@ void Viewer::Clear()
 	delete[] shapes;
 	shapes = nullptr;
 	shapesCount = shapesCapacity = 0;
+	selectedIndex = -1;
 
 	ClearRedo();
 }
@@ -78,6 +79,9 @@ bool Viewer::Undo()
 {
 	Shape* last = PopFromArray(shapes, shapesCount);
 	if (!last) return false;
+
+	if (shapesCount <= selectedIndex)
+		selectedIndex = -1;
 
 	PushToArray(redoShapes, redoCount, redoCapacity, last);
 	return true;
@@ -89,6 +93,51 @@ bool Viewer::Redo()
 	if (!restored) return false;
 
 	PushToArray(shapes, shapesCount, shapesCapacity, restored);
+	return true;
+}
+
+void Viewer::ClearSelection()
+{
+	for (int i = 0; i < shapesCount; i++)
+	{
+		if (shapes[i])
+			shapes[i]->SetSelected(false);
+	}
+	selectedIndex = -1;
+}
+
+int Viewer::SelectAt(long sceneX, long sceneY)
+{
+	ClearSelection();
+
+	// перевіряє з останнього об'єкта
+	for (int i = shapesCount - 1; i >= 0; i--)
+	{
+		if (shapes[i] && shapes[i]->HitTest(sceneX, sceneY))
+		{
+			shapes[i]->SetSelected(true);
+			selectedIndex = i;
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+Shape* Viewer::GetSelectedShape() const
+{
+	if (selectedIndex >= 0 && selectedIndex < shapesCount)
+		return shapes[selectedIndex];
+	return nullptr;
+}
+
+bool Viewer::MoveSelectedBy(long dx, long dy)
+{
+	Shape* pSel = GetSelectedShape();
+	if (!pSel || (dx == 0 && dy == 0))
+		return false;
+
+	pSel->MoveBy(dx, dy);
 	return true;
 }
 
@@ -116,14 +165,12 @@ void Viewer::UpdateScrollBars(HWND hWnd)
 	si.cbSize = sizeof(SCROLLINFO);
 	si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
 
-	// Горизонтальний скролбар
 	si.nMin = 0;
 	si.nMax = SCENE_WIDTH - 1;
 	si.nPage = (UINT)clientW;
 	si.nPos = scrollX;
 	SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
 
-	// Вертикальний скролбар
 	si.nMin = 0;
 	si.nMax = SCENE_HEIGHT - 1;
 	si.nPage = (UINT)clientH;
@@ -252,7 +299,6 @@ void Viewer::BeginCanvasDraw(HDC hdc, HWND hWnd) const
 	RECT rc = {};
 	GetClientRect(hWnd, &rc);
 
-	// відсікає область малювання, щоб фігури не залізали на тулбар
 	IntersectClipRect(hdc, 0, topOffset, rc.right, rc.bottom);
 	SetViewportOrgEx(hdc, -scrollX, topOffset - scrollY, nullptr);
 }
@@ -273,14 +319,12 @@ void Viewer::Render(HWND hWnd) const
 		HBITMAP memBmp = CreateCompatibleBitmap(hdc, width, height);
 		HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, memBmp);
 
-		// сірий фон який виходить за 2000x2000 якщо відкрито на великому екрані
 		HBRUSH hOuterBrush = CreateSolidBrush(RGB(235, 235, 235));
 		FillRect(memDC, &rc, hOuterBrush);
 		DeleteObject(hOuterBrush);
 
 		BeginCanvasDraw(memDC, hWnd);
 
-		// біла сцена 2000x2000
 		HPEN hBorderPen = CreatePen(PS_SOLID, 1, RGB(180, 180, 180));
 		HPEN hOldPen = (HPEN)SelectObject(memDC, hBorderPen);
 		HBRUSH hOldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(WHITE_BRUSH));
@@ -291,7 +335,6 @@ void Viewer::Render(HWND hWnd) const
 		SelectObject(memDC, hOldPen);
 		DeleteObject(hBorderPen);
 
-		// поліморфне відображення всіх об'єктів на сцені
 		for (int i = 0; i < shapesCount; i++)
 		{
 			if (shapes[i])

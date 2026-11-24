@@ -17,6 +17,8 @@ private:
 	int redoCount = 0;
 	int redoCapacity = 0;
 
+	int selectedIndex = -1;
+
 	int scrollX = 0;
 	int scrollY = 0;
 	int topOffset = 0;
@@ -44,6 +46,12 @@ public:
 	bool CanRedo() const { return redoCount > 0; }
 	bool Undo();
 	bool Redo();
+
+	int SelectAt(long sceneX, long sceneY);
+	void ClearSelection();
+	int GetSelectedIndex() const { return selectedIndex; }
+	Shape* GetSelectedShape() const;
+	bool MoveSelectedBy(long dx, long dy);
 
 	int GetCount() const { return shapesCount; }
 	Shape* GetShape(int index) const

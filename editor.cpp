@@ -75,6 +75,12 @@ void Editor::GetSceneMousePos(HWND hWnd, long& sx, long& sy) const
 	viewer.ScreenToScene(pt.x, pt.y, sx, sy, true);
 }
 
+void Editor::ApplyCurrentStyle(Shape* pShape) const
+{
+	if (pShape)
+		pShape->SetStyle(borderColor, fillColor, hasBorder, hasFill, borderWidth);
+}
+
 void Editor::StartTool(Shape* pShape, UINT cmdId)
 {
 	delete pcurrent;
@@ -82,10 +88,15 @@ void Editor::StartTool(Shape* pShape, UINT cmdId)
 	currentToolId = cmdId;
 	isDrawing = false;
 	rubberDrawn = false;
+	isMoving = false;
+	movedAny = false;
 
-	if (pcurrent)
-		pcurrent->SetStyle(borderColor, fillColor, hasFill, borderWidth);
+	if (cmdId != IDM_SELECT && cmdId != IDM_MOVE)
+	{
+		viewer.ClearSelection();
+	}
 
+	ApplyCurrentStyle(pcurrent);
 	toolbar.SetActiveTool(cmdId);
 }
 
@@ -93,6 +104,8 @@ void Editor::SelectTool(UINT cmdId)
 {
 	switch (cmdId)
 	{
+	case IDM_SELECT:      StartTool(nullptr, cmdId);          break;
+	case IDM_MOVE:        StartTool(nullptr, cmdId);          break;
 	case IDM_NODE:        StartTool(new Node(), cmdId);       break;
 	case IDM_EDGE:        StartTool(new Edge(), cmdId);       break;
 	case IDM_LINE:        StartTool(new Line(), cmdId);       break;
@@ -122,9 +135,8 @@ void Editor::ChooseBorderColor(HWND hWnd)
 	if (ChooseColorW(&cc))
 	{
 		borderColor = cc.rgbResult;
-		if (pcurrent)
-			pcurrent->SetStyle(borderColor, fillColor, hasFill, borderWidth);
-		toolbar.UpdateColors(borderColor, fillColor, hasFill);
+		hasBorder = true;
+		ApplyCurrentStyle(pcurrent);
 	}
 }
 
@@ -141,25 +153,27 @@ void Editor::ChooseFillColor(HWND hWnd)
 	{
 		fillColor = cc.rgbResult;
 		hasFill = true;
-		if (pcurrent)
-			pcurrent->SetStyle(borderColor, fillColor, hasFill, borderWidth);
-		toolbar.UpdateColors(borderColor, fillColor, hasFill);
+		ApplyCurrentStyle(pcurrent);
 	}
+}
+
+void Editor::ToggleNoBorder()
+{
+	hasBorder = !hasBorder;
+	ApplyCurrentStyle(pcurrent);
 }
 
 void Editor::ToggleNoFill()
 {
 	hasFill = !hasFill;
-	if (pcurrent)
-		pcurrent->SetStyle(borderColor, fillColor, hasFill, borderWidth);
-	toolbar.UpdateColors(borderColor, fillColor, hasFill);
+	ApplyCurrentStyle(pcurrent);
 }
 
 void Editor::SetBorderWidth(int width)
 {
 	borderWidth = width;
-	if (pcurrent)
-		pcurrent->SetStyle(borderColor, fillColor, hasFill, borderWidth);
+	hasBorder = true;
+	ApplyCurrentStyle(pcurrent);
 }
 
 void Editor::OnCreate(HWND hWnd)
@@ -167,8 +181,6 @@ void Editor::OnCreate(HWND hWnd)
 	HINSTANCE hInst = (HINSTANCE)GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
 
 	toolbar.Create(hWnd, hInst);
-	toolbar.UpdateColors(borderColor, fillColor, hasFill);
-
 	viewer.SetTopOffset(toolbar.GetHeight());
 	viewer.UpdateScrollBars(hWnd);
 
@@ -207,25 +219,68 @@ void Editor::OnMouseWheel(HWND hWnd, WPARAM wParam)
 
 void Editor::OnLBDown(HWND hWnd)
 {
-	if (!pcurrent) return;
-
 	POINT pt = {};
 	GetCursorPos(&pt);
 	ScreenToClient(hWnd, &pt);
 	if (pt.y < viewer.GetTopOffset()) return;
 
+	long sx = 0, sy = 0;
+	viewer.ScreenToScene(pt.x, pt.y, sx, sy, true);
+
+	if (currentToolId == IDM_SELECT)
+	{
+		viewer.SelectAt(sx, sy);
+		InvalidateRect(hWnd, nullptr, FALSE);
+		return;
+	}
+
+	if (currentToolId == IDM_MOVE)
+	{
+		int hit = viewer.SelectAt(sx, sy);
+		if (hit >= 0)
+		{
+			isMoving = true;
+			movedAny = false;
+			lastMoveX = sx;
+			lastMoveY = sy;
+			SetCapture(hWnd);
+		}
+		InvalidateRect(hWnd, nullptr, FALSE);
+		return;
+	}
+
+	if (!pcurrent) return;
+
 	isDrawing = true;
 	rubberDrawn = false;
+	xstart = sx;
+	ystart = sy;
 
-	viewer.ScreenToScene(pt.x, pt.y, xstart, ystart, true);
 	pcurrent->Set(xstart, ystart, xstart, ystart);
-	pcurrent->SetStyle(borderColor, fillColor, hasFill, borderWidth);
+	ApplyCurrentStyle(pcurrent);
 
 	SetCapture(hWnd);
 }
 
 void Editor::OnMouseMove(HWND hWnd)
 {
+	if (isMoving)
+	{
+		long sx = 0, sy = 0;
+		GetSceneMousePos(hWnd, sx, sy);
+		long dx = sx - lastMoveX;
+		long dy = sy - lastMoveY;
+
+		if (viewer.MoveSelectedBy(dx, dy))
+		{
+			lastMoveX = sx;
+			lastMoveY = sy;
+			movedAny = true;
+			InvalidateRect(hWnd, nullptr, FALSE);
+		}
+		return;
+	}
+
 	if (!isDrawing || !pcurrent) return;
 
 	HDC hdc = GetDC(hWnd);
@@ -252,6 +307,19 @@ void Editor::OnMouseMove(HWND hWnd)
 
 void Editor::OnLBUp(HWND hWnd)
 {
+	if (isMoving)
+	{
+		isMoving = false;
+		ReleaseCapture();
+		if (movedAny)
+		{
+			files.MarkDirty(hWnd);
+			movedAny = false;
+		}
+		InvalidateRect(hWnd, nullptr, FALSE);
+		return;
+	}
+
 	if (!isDrawing || !pcurrent) return;
 
 	isDrawing = false;
@@ -262,7 +330,7 @@ void Editor::OnLBUp(HWND hWnd)
 	GetSceneMousePos(hWnd, x, y);
 
 	pcurrent->Set(xstart, ystart, x, y);
-	pcurrent->SetStyle(borderColor, fillColor, hasFill, borderWidth);
+	ApplyCurrentStyle(pcurrent);
 	pcurrent->SetRubber(false);
 
 	if (currentToolId == IDM_TEXT)
@@ -300,6 +368,7 @@ void Editor::OnInitMenuPopup(HWND hWnd)
 	if (!hMenu) return;
 
 	const UINT toolIds[] = {
+		IDM_SELECT, IDM_MOVE,
 		IDM_NODE, IDM_EDGE, IDM_LINE, IDM_ARROW,
 		IDM_TRNGL, IDM_RIGHT_TRNGL, IDM_RECT, IDM_ROMB,
 		IDM_PENT, IDM_HEX, IDM_ELIPS, IDM_CUBE, IDM_CYL, IDM_TEXT
@@ -310,10 +379,11 @@ void Editor::OnInitMenuPopup(HWND hWnd)
 		CheckMenuItem(hMenu, id, MF_BYCOMMAND | ((id == currentToolId) ? MF_CHECKED : MF_UNCHECKED));
 	}
 
+	CheckMenuItem(hMenu, IDM_NO_BORDER, MF_BYCOMMAND | ((!hasBorder) ? MF_CHECKED : MF_UNCHECKED));
 	CheckMenuItem(hMenu, IDM_NO_COLOR, MF_BYCOMMAND | ((!hasFill) ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(hMenu, IDM_WIDTH_1, MF_BYCOMMAND | ((borderWidth == 1) ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(hMenu, IDM_WIDTH_3, MF_BYCOMMAND | ((borderWidth == 3) ? MF_CHECKED : MF_UNCHECKED));
-	CheckMenuItem(hMenu, IDM_WIDTH_5, MF_BYCOMMAND | ((borderWidth == 5) ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(hMenu, IDM_WIDTH_1, MF_BYCOMMAND | ((borderWidth == 1 && hasBorder) ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(hMenu, IDM_WIDTH_3, MF_BYCOMMAND | ((borderWidth == 3 && hasBorder) ? MF_CHECKED : MF_UNCHECKED));
+	CheckMenuItem(hMenu, IDM_WIDTH_5, MF_BYCOMMAND | ((borderWidth == 5 && hasBorder) ? MF_CHECKED : MF_UNCHECKED));
 
 	EnableMenuItem(hMenu, IDM_UNDO, MF_BYCOMMAND | (viewer.CanUndo() ? MF_ENABLED : MF_GRAYED));
 	EnableMenuItem(hMenu, IDM_REDO, MF_BYCOMMAND | (viewer.CanRedo() ? MF_ENABLED : MF_GRAYED));
@@ -347,6 +417,10 @@ bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 		files.SaveAs(hWnd, viewer);
 		return true;
 
+	case IDM_EXPORT_SVG:
+		files.ExportSvg(hWnd, viewer);
+		return true;
+
 	case IDM_UNDO:
 		if (viewer.Undo())
 		{
@@ -367,8 +441,12 @@ bool Editor::OnCommand(HWND hWnd, WPARAM wParam)
 		ChooseBorderColor(hWnd);
 		return true;
 
-	case IDM_FILL_COLOR:
+	case IDM_COLOR:
 		ChooseFillColor(hWnd);
+		return true;
+
+	case IDM_NO_BORDER:
+		ToggleNoBorder();
 		return true;
 
 	case IDM_NO_COLOR:

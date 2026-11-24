@@ -26,20 +26,27 @@ private:
 
 	bool isDrawing = false;
 	bool rubberDrawn = false;
+	bool isMoving = false;
+	bool movedAny = false;
+
 	long xstart = 0, ystart = 0;
+	long lastMoveX = 0, lastMoveY = 0;
 
 	COLORREF borderColor = RGB(0, 0, 0);
 	COLORREF fillColor = RGB(255, 255, 255);
+	bool hasBorder = true;
 	bool hasFill = false;
 	int borderWidth = 1;
 	COLORREF customColors[16] = {};
 
 	void GetSceneMousePos(HWND hWnd, long& sx, long& sy) const;
+	void ApplyCurrentStyle(Shape* pShape) const;
 	void StartTool(Shape* pShape, UINT cmdId);
 	void SelectTool(UINT cmdId);
 
 	void ChooseBorderColor(HWND hWnd);
 	void ChooseFillColor(HWND hWnd);
+	void ToggleNoBorder();
 	void ToggleNoFill();
 	void SetBorderWidth(int width);
 

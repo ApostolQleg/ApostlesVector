@@ -10,6 +10,7 @@ private:
 
 	bool WriteToFile(HWND hWnd, const std::wstring& path, const Viewer& viewer) const;
 	bool ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) const;
+	bool WriteSvgToFile(HWND hWnd, const std::wstring& path, const Viewer& viewer) const;
 
 	std::wstring ExtractFileName(const std::wstring& path) const;
 
@@ -24,4 +25,5 @@ public:
 	bool Open(HWND hWnd, Viewer& viewer);
 	bool Save(HWND hWnd, const Viewer& viewer);
 	bool SaveAs(HWND hWnd, const Viewer& viewer);
+	bool ExportSvg(HWND hWnd, const Viewer& viewer) const;
 };

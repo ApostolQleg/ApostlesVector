@@ -35,12 +35,16 @@
 #define IDM_REDO                        32812
 #define IDM_UNDO                        32815
 #define IDM_TEXT                        32818
-#define IDM_FILL_COLOR                  32819
-#define IDM_BORDER_COLOR                32820
-#define IDM_NO_COLOR                    32821
+#define IDM_COLOR                       32819
+#define IDM_NO_COLOR                    32820
+#define IDM_BORDER_COLOR                32821
+#define IDM_NO_BORDER                   32822
 #define IDM_WIDTH_1                     32826
 #define IDM_WIDTH_3                     32827
 #define IDM_WIDTH_5                     32828
+#define IDM_SELECT                      32829
+#define IDM_MOVE                        32830
+#define IDM_EXPORT_SVG                  32840
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -49,7 +53,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        132
-#define _APS_NEXT_COMMAND_VALUE         32829
+#define _APS_NEXT_COMMAND_VALUE         32841
 #define _APS_NEXT_CONTROL_VALUE         1001
 #define _APS_NEXT_SYMED_VALUE           110
 #endif

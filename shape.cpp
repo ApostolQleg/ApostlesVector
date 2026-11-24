@@ -5,6 +5,35 @@
 
 constexpr double PI = 3.14159265358979323846;
 
+static void WriteSvgColorAttr(FILE* fout, const WCHAR* attrName, COLORREF color, bool enabled)
+{
+	if (!fout) return;
+	if (!enabled)
+	{
+		fwprintf(fout, L" %s=\"none\"", attrName);
+	}
+	else
+	{
+		fwprintf(fout, L" %s=\"rgb(%d,%d,%d)\"",
+			attrName,
+			(int)GetRValue(color),
+			(int)GetGValue(color),
+			(int)GetBValue(color));
+	}
+}
+
+static void WriteSvgPointsAttr(FILE* fout, const POINT* pts, int count)
+{
+	if (!fout || !pts || count <= 0) return;
+	fwprintf(fout, L" points=\"");
+	for (int i = 0; i < count; i++)
+	{
+		if (i > 0) fwprintf(fout, L" ");
+		fwprintf(fout, L"%ld,%ld", pts[i].x, pts[i].y);
+	}
+	fwprintf(fout, L"\"");
+}
+
 // Shape
 
 void Shape::Set(long xstart, long ystart, long xend, long yend)
@@ -15,10 +44,27 @@ void Shape::Set(long xstart, long ystart, long xend, long yend)
 	y2 = yend;
 }
 
-void Shape::SetStyle(COLORREF border, COLORREF fill, bool filled, int width)
+void Shape::MoveBy(long dx, long dy)
+{
+	x1 += dx;
+	y1 += dy;
+	x2 += dx;
+	y2 += dy;
+}
+
+bool Shape::HitTest(long sx, long sy, long tolerance) const
+{
+	long l, t, r, b;
+	NormalizeCoords(l, t, r, b);
+	return (sx >= l - tolerance && sx <= r + tolerance &&
+		sy >= t - tolerance && sy <= b + tolerance);
+}
+
+void Shape::SetStyle(COLORREF border, COLORREF fill, bool borderEnabled, bool filled, int width)
 {
 	borderColor = border;
 	fillColor = fill;
+	hasBorder = borderEnabled;
 	hasFill = filled;
 	borderWidth = (width > 0) ? width : 1;
 }
@@ -27,7 +73,21 @@ HPEN Shape::CreateBorderPen() const
 {
 	if (rubber)
 		return CreatePen(PS_DOT, 1, RGB(0, 0, 0));
+
+	if (!hasBorder)
+		return (HPEN)GetStockObject(NULL_PEN);
+
 	return CreatePen(PS_SOLID, borderWidth, borderColor);
+}
+
+HBRUSH Shape::CreateFillBrush(bool& createdBrush) const
+{
+	createdBrush = false;
+	if (!hasFill || rubber)
+		return (HBRUSH)GetStockObject(NULL_BRUSH);
+
+	createdBrush = true;
+	return CreateSolidBrush(fillColor);
 }
 
 void Shape::NormalizeCoords(long& l, long& t, long& r, long& b) const
@@ -38,31 +98,58 @@ void Shape::NormalizeCoords(long& l, long& t, long& r, long& b) const
 	b = (y1 < y2) ? y2 : y1;
 }
 
+void Shape::DrawSelection(HDC hdc) const
+{
+	if (!selected || rubber) return;
+
+	long l, t, r, b;
+	NormalizeCoords(l, t, r, b);
+
+	HPEN hSelPen = CreatePen(PS_DASH, 1, RGB(0, 120, 215));
+	HPEN hOldPen = (HPEN)SelectObject(hdc, hSelPen);
+	HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+
+	Rectangle(hdc, l - 4, t - 4, r + 4, b + 4);
+
+	SelectObject(hdc, hOldBrush);
+	SelectObject(hdc, hOldPen);
+	DeleteObject(hSelPen);
+}
+
 void Shape::Serialize(FILE* fout) const
 {
 	if (!fout) return;
-	fwprintf(fout, L"%s %ld %ld %ld %ld %lu %lu %d %d\n",
+	fwprintf(fout, L"%s %ld %ld %ld %ld %lu %lu %d %d %d\n",
 		GetTypeName(), x1, y1, x2, y2,
 		(unsigned long)borderColor, (unsigned long)fillColor,
-		hasFill ? 1 : 0, borderWidth);
+		hasBorder ? 1 : 0, hasFill ? 1 : 0, borderWidth);
 }
 
 bool Shape::Deserialize(const WCHAR* params)
 {
 	if (!params) return false;
 	unsigned long bCol = 0, fCol = 0;
-	int filled = 0, width = 1;
+	int borderFlag = 1, filled = 0, width = 1;
 
-	if (swscanf_s(params, L"%ld %ld %ld %ld %lu %lu %d %d",
-		&x1, &y1, &x2, &y2, &bCol, &fCol, &filled, &width) == 8)
+	int parsed = swscanf_s(params, L"%ld %ld %ld %ld %lu %lu %d %d %d",
+		&x1, &y1, &x2, &y2, &bCol, &fCol, &borderFlag, &filled, &width);
+
+	if (parsed >= 9)
 	{
 		borderColor = (COLORREF)bCol;
 		fillColor = (COLORREF)fCol;
+		hasBorder = (borderFlag != 0);
 		hasFill = (filled != 0);
 		borderWidth = (width > 0) ? width : 1;
 		return true;
 	}
+
 	return false;
+}
+
+void Shape::SerializeSvg(FILE* fout) const
+{
+	UNREFERENCED_PARAMETER(fout);
 }
 
 Shape* Shape::CreateByName(const WCHAR* typeName)
@@ -98,14 +185,24 @@ void Line::Show(HDC hdc)
 	LineTo(hdc, x2, y2);
 
 	SelectObject(hdc, hOldPen);
-	DeleteObject(hPen);
+	if (!rubber && hasBorder) DeleteObject(hPen);
+
+	DrawSelection(hdc);
+}
+
+void Line::SerializeSvg(FILE* fout) const
+{
+	if (!fout || !hasBorder) return;
+	fwprintf(fout, L"  <line x1=\"%ld\" y1=\"%ld\" x2=\"%ld\" y2=\"%ld\"", x1, y1, x2, y2);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
 }
 
 void Rect::Show(HDC hdc)
 {
-	bool useBrush = (hasFill && !rubber);
+	bool createdBrush = false;
 	HPEN hPen = CreateBorderPen();
-	HBRUSH hBrush = useBrush ? CreateSolidBrush(fillColor) : (HBRUSH)GetStockObject(NULL_BRUSH);
+	HBRUSH hBrush = CreateFillBrush(createdBrush);
 
 	HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
 	HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hBrush);
@@ -114,15 +211,28 @@ void Rect::Show(HDC hdc)
 
 	SelectObject(hdc, hOldBrush);
 	SelectObject(hdc, hOldPen);
-	if (useBrush) DeleteObject(hBrush);
-	DeleteObject(hPen);
+	if (createdBrush) DeleteObject(hBrush);
+	if (!rubber && hasBorder) DeleteObject(hPen);
+
+	DrawSelection(hdc);
+}
+
+void Rect::SerializeSvg(FILE* fout) const
+{
+	if (!fout) return;
+	long l, t, r, b;
+	NormalizeCoords(l, t, r, b);
+	fwprintf(fout, L"  <rect x=\"%ld\" y=\"%ld\" width=\"%ld\" height=\"%ld\"", l, t, r - l, b - t);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, hasBorder);
+	WriteSvgColorAttr(fout, L"fill", fillColor, hasFill);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", hasBorder ? borderWidth : 0);
 }
 
 void Elips::Show(HDC hdc)
 {
-	bool useBrush = (hasFill && !rubber);
+	bool createdBrush = false;
 	HPEN hPen = CreateBorderPen();
-	HBRUSH hBrush = useBrush ? CreateSolidBrush(fillColor) : (HBRUSH)GetStockObject(NULL_BRUSH);
+	HBRUSH hBrush = CreateFillBrush(createdBrush);
 
 	HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
 	HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hBrush);
@@ -131,8 +241,26 @@ void Elips::Show(HDC hdc)
 
 	SelectObject(hdc, hOldBrush);
 	SelectObject(hdc, hOldPen);
-	if (useBrush) DeleteObject(hBrush);
-	DeleteObject(hPen);
+	if (createdBrush) DeleteObject(hBrush);
+	if (!rubber && hasBorder) DeleteObject(hPen);
+
+	DrawSelection(hdc);
+}
+
+void Elips::SerializeSvg(FILE* fout) const
+{
+	if (!fout) return;
+	long l, t, r, b;
+	NormalizeCoords(l, t, r, b);
+	double cx = (l + r) / 2.0;
+	double cy = (t + b) / 2.0;
+	double rx = (r - l) / 2.0;
+	double ry = (b - t) / 2.0;
+
+	fwprintf(fout, L"  <ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\"", cx, cy, rx, ry);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, hasBorder);
+	WriteSvgColorAttr(fout, L"fill", fillColor, hasFill);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", hasBorder ? borderWidth : 0);
 }
 
 // Багатокутники
@@ -144,9 +272,9 @@ void Poly::Show(HDC hdc)
 	CalcVertices(pts, count);
 	if (count < 3) return;
 
-	bool useBrush = (hasFill && !rubber);
+	bool createdBrush = false;
 	HPEN hPen = CreateBorderPen();
-	HBRUSH hBrush = useBrush ? CreateSolidBrush(fillColor) : (HBRUSH)GetStockObject(NULL_BRUSH);
+	HBRUSH hBrush = CreateFillBrush(createdBrush);
 
 	HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
 	HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hBrush);
@@ -155,74 +283,87 @@ void Poly::Show(HDC hdc)
 
 	SelectObject(hdc, hOldBrush);
 	SelectObject(hdc, hOldPen);
-	if (useBrush) DeleteObject(hBrush);
-	DeleteObject(hPen);
+	if (createdBrush) DeleteObject(hBrush);
+	if (!rubber && hasBorder) DeleteObject(hPen);
+
+	DrawSelection(hdc);
+}
+
+void Poly::SerializeSvg(FILE* fout) const
+{
+	if (!fout) return;
+	POINT pts[8] = {};
+	int count = 0;
+	CalcVertices(pts, count);
+	if (count < 3) return;
+
+	fwprintf(fout, L"  <polygon");
+	WriteSvgPointsAttr(fout, pts, count);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, hasBorder);
+	WriteSvgColorAttr(fout, L"fill", fillColor, hasFill);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", hasBorder ? borderWidth : 0);
 }
 
 void Trngl::CalcVertices(POINT* pts, int& count) const
 {
-	long l, t, r, b;
-	NormalizeCoords(l, t, r, b);
+	// Перша точка (x1, y1) - верхня вершина, друга (x2, y2) - правий нижній кут
+	// Зеркально по X відносно (x1, y1), якщо ведемо вліво
+	long dx = x2 - x1;
 	count = 3;
-	pts[0] = { (l + r) / 2, t };
-	pts[1] = { r, b };
-	pts[2] = { l, b };
+	pts[0] = { x1, y1 };
+	pts[1] = { x2, y2 };
+	pts[2] = { x1 - dx, y2 };
 }
 
 void RightTrngl::CalcVertices(POINT* pts, int& count) const
 {
-	long l, t, r, b;
-	NormalizeCoords(l, t, r, b);
+	// Прямий кут у (x1, y1), катети йдуть до x2 та y2 у напрямку руху миші
 	count = 3;
-	pts[0] = { l, t };
-	pts[1] = { r, b };
-	pts[2] = { l, b };
+	pts[0] = { x1, y1 };
+	pts[1] = { x2, y1 };
+	pts[2] = { x1, y2 };
 }
 
 void Romb::CalcVertices(POINT* pts, int& count) const
 {
-	long l, t, r, b;
-	NormalizeCoords(l, t, r, b);
+	// Центр (x1, y1), радіуси визначаються вектором (x2 - x1, y2 - y1)
+	long rx = x2 - x1;
+	long ry = y2 - y1;
 	count = 4;
-	pts[0] = { (l + r) / 2, t };
-	pts[1] = { r, (t + b) / 2 };
-	pts[2] = { (l + r) / 2, b };
-	pts[3] = { l, (t + b) / 2 };
+	pts[0] = { x1, y1 - ry };
+	pts[1] = { x1 + rx, y1 };
+	pts[2] = { x1, y1 + ry };
+	pts[3] = { x1 - rx, y1 };
 }
 
-static void CalcRegularPolygon(long l, long t, long r, long b, int sides, POINT* pts)
+static void CalcRegularPolygon(long cx, long cy, long rx, long ry, int sides, POINT* pts)
 {
-	double cx = (l + r) / 2.0;
-	double cy = (t + b) / 2.0;
-	double rx = (r - l) / 2.0;
-	double ry = (b - t) / 2.0;
-	double startAngle = -PI / 2.0; // верхня вершина спрямована вгору
-
+	double startAngle = -PI / 2.0;
 	for (int i = 0; i < sides; i++)
 	{
 		double angle = startAngle + (2.0 * PI * i) / sides;
-		pts[i].x = std::lround(cx + rx * std::cos(angle));
-		pts[i].y = std::lround(cy + ry * std::sin(angle));
+		pts[i].x = std::lround((double)cx + (double)rx * std::cos(angle));
+		pts[i].y = std::lround((double)cy + (double)ry * std::sin(angle));
 	}
 }
 
 void Pent::CalcVertices(POINT* pts, int& count) const
 {
-	long l, t, r, b;
-	NormalizeCoords(l, t, r, b);
+	long rx = x2 - x1;
+	long ry = y2 - y1;
 	count = 5;
-	CalcRegularPolygon(l, t, r, b, count, pts);
+	CalcRegularPolygon(x1, y1, rx, ry, count, pts);
 }
 
 void Hex::CalcVertices(POINT* pts, int& count) const
 {
-	long l, t, r, b;
-	NormalizeCoords(l, t, r, b);
+	long rx = x2 - x1;
+	long ry = y2 - y1;
 	count = 6;
-	CalcRegularPolygon(l, t, r, b, count, pts);
+	CalcRegularPolygon(x1, y1, rx, ry, count, pts);
 }
 
-// Node, Arrow, Edge, Cube, Cylinder
+// Node, Arrow, Edge, Cube, Cyl
 
 void Node::Show(HDC hdc)
 {
@@ -234,6 +375,32 @@ void Node::Show(HDC hdc)
 	Elips::Show(hdc);
 
 	Set(xold1, yold1, xold2, yold2);
+	DrawSelection(hdc);
+}
+
+void Node::DrawSelection(HDC hdc) const
+{
+	if (!selected || rubber) return;
+
+	const long r = NODE_RADIUS + 4;
+	HPEN hSelPen = CreatePen(PS_DASH, 1, RGB(0, 120, 215));
+	HPEN hOldPen = (HPEN)SelectObject(hdc, hSelPen);
+	HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+
+	Rectangle(hdc, x1 - r, y1 - r, x1 + r, y1 + r);
+
+	SelectObject(hdc, hOldBrush);
+	SelectObject(hdc, hOldPen);
+	DeleteObject(hSelPen);
+}
+
+void Node::SerializeSvg(FILE* fout) const
+{
+	if (!fout) return;
+	fwprintf(fout, L"  <circle cx=\"%ld\" cy=\"%ld\" r=\"%d\"", x1, y1, NODE_RADIUS);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, hasBorder);
+	WriteSvgColorAttr(fout, L"fill", fillColor, hasFill);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", hasBorder ? borderWidth : 0);
 }
 
 void Arrow::Show(HDC hdc)
@@ -243,7 +410,7 @@ void Arrow::Show(HDC hdc)
 	double dx = (double)(x2 - x1);
 	double dy = (double)(y2 - y1);
 	double len = std::hypot(dx, dy);
-	if (len < 1.0) return;
+	if (len < 1.0 || !hasBorder) return;
 
 	double angle = std::atan2(dy, dx);
 	double wingLen = 12.0 + borderWidth * 2.0;
@@ -266,6 +433,36 @@ void Arrow::Show(HDC hdc)
 	Set(xold1, yold1, xold2, yold2);
 }
 
+void Arrow::SerializeSvg(FILE* fout) const
+{
+	if (!fout || !hasBorder) return;
+
+	Line::SerializeSvg(fout);
+
+	double dx = (double)(x2 - x1);
+	double dy = (double)(y2 - y1);
+	double len = std::hypot(dx, dy);
+	if (len < 1.0) return;
+
+	double angle = std::atan2(dy, dx);
+	double wingLen = 12.0 + borderWidth * 2.0;
+	if (wingLen > len * 0.6) wingLen = len * 0.6;
+	constexpr double spread = 25.0 * PI / 180.0;
+
+	long wx1 = x2 - std::lround(wingLen * std::cos(angle - spread));
+	long wy1 = y2 - std::lround(wingLen * std::sin(angle - spread));
+	long wx2 = x2 - std::lround(wingLen * std::cos(angle + spread));
+	long wy2 = y2 - std::lround(wingLen * std::sin(angle + spread));
+
+	fwprintf(fout, L"  <line x1=\"%ld\" y1=\"%ld\" x2=\"%ld\" y2=\"%ld\"", x2, y2, wx1, wy1);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+
+	fwprintf(fout, L"  <line x1=\"%ld\" y1=\"%ld\" x2=\"%ld\" y2=\"%ld\"", x2, y2, wx2, wy2);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+}
+
 void Edge::Show(HDC hdc)
 {
 	long xold1 = x1, yold1 = y1;
@@ -284,34 +481,141 @@ void Edge::Show(HDC hdc)
 	Set(xold1, yold1, xold2, yold2);
 }
 
+void Edge::SerializeSvg(FILE* fout) const
+{
+	if (!fout) return;
+	Line::SerializeSvg(fout);
+
+	const long r = EDGE_RADIUS;
+	fwprintf(fout, L"  <circle cx=\"%ld\" cy=\"%ld\" r=\"%ld\"", x1, y1, r);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, hasBorder);
+	WriteSvgColorAttr(fout, L"fill", fillColor, hasFill);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", hasBorder ? borderWidth : 0);
+
+	fwprintf(fout, L"  <circle cx=\"%ld\" cy=\"%ld\" r=\"%ld\"", x2, y2, r);
+	WriteSvgColorAttr(fout, L"stroke", borderColor, hasBorder);
+	WriteSvgColorAttr(fout, L"fill", fillColor, hasFill);
+	fwprintf(fout, L" stroke-width=\"%d\" />\n", hasBorder ? borderWidth : 0);
+}
+
 void Cube::Show(HDC hdc)
 {
 	long xold1 = x1, yold1 = y1;
 	long xold2 = x2, yold2 = y2;
 
-	long l, t, r, b;
-	NormalizeCoords(l, t, r, b);
+	long dx = x2 - x1;
+	long dy = y2 - y1;
+	long absW = (dx < 0) ? -dx : dx;
+	long absH = (dy < 0) ? -dy : dy;
+	long depth = ((absW < absH) ? absW : absH) / 3;
+	long sx = (dx >= 0) ? depth : -depth;
+	long sy = (dy >= 0) ? depth : -depth;
 
-	long w = r - l;
-	long h = b - t;
-	long d = ((w < h) ? w : h) / 3;
+	// Суцільна заливка всього куба
+	if (hasFill && !rubber)
+	{
+		POINT hull[6] = {
+			{ x1, y1 },
+			{ x1 + sx, y1 - sy },
+			{ x2, y1 - sy },
+			{ x2, y2 },
+			{ x2 - sx, y2 + sy },
+			{ x1, y2 + sy }
+		};
 
-	// задній квадратик
-	Set(l + d, t, r, b - d);
+		HPEN hNullPen = (HPEN)GetStockObject(NULL_PEN);
+		HBRUSH hFillBrush = CreateSolidBrush(fillColor);
+		HPEN hOldPen = (HPEN)SelectObject(hdc, hNullPen);
+		HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hFillBrush);
+
+		Polygon(hdc, hull, 6);
+
+		SelectObject(hdc, hOldBrush);
+		SelectObject(hdc, hOldPen);
+		DeleteObject(hFillBrush);
+	}
+
+	// Задня грань
+	Set(x1 + sx, y1 - sy, x2, y2 - sy);
 	Rect::Show(hdc);
 
-	// лінії між квадратиками
-	Set(l, t + d, l + d, t);     Line::Show(hdc);
-	Set(r - d, t + d, r, t);     Line::Show(hdc);
-	Set(l, b, l + d, b - d);     Line::Show(hdc);
-	Set(r - d, b, r, b - d);     Line::Show(hdc);
+	// лінії між гранями
+	Set(x1, y1, x1 + sx, y1 - sy); Line::Show(hdc);
+	Set(x2 - sx, y1, x2, y1 - sy); Line::Show(hdc);
+	Set(x1, y2 + sy, x1 + sx, y2); Line::Show(hdc);
+	Set(x2 - sx, y2 + sy, x2, y2); Line::Show(hdc);
 
-	// передній квадратик
-	Set(l, t + d, r - d, b);
+	// передня грань
+	Set(x1, y1 + sy, x2 - sx, y2);
 	Rect::Show(hdc);
-
 
 	Set(xold1, yold1, xold2, yold2);
+	DrawSelection(hdc);
+}
+
+void Cube::SerializeSvg(FILE* fout) const
+{
+	if (!fout) return;
+
+	long dx = x2 - x1;
+	long dy = y2 - y1;
+	long absW = (dx < 0) ? -dx : dx;
+	long absH = (dy < 0) ? -dy : dy;
+	long depth = ((absW < absH) ? absW : absH) / 3;
+	long sx = (dx >= 0) ? depth : -depth;
+	long sy = (dy >= 0) ? depth : -depth;
+
+	if (hasFill)
+	{
+		POINT hull[6] = {
+			{ x1, y1 },
+			{ x1 + sx, y1 - sy },
+			{ x2, y1 - sy },
+			{ x2, y2 },
+			{ x2 - sx, y2 + sy },
+			{ x1, y2 + sy }
+		};
+		fwprintf(fout, L"  <polygon");
+		WriteSvgPointsAttr(fout, hull, 6);
+		fwprintf(fout, L" stroke=\"none\"");
+		WriteSvgColorAttr(fout, L"fill", fillColor, true);
+		fwprintf(fout, L" />\n");
+	}
+
+	if (hasBorder)
+	{
+		long l1 = (x1 + sx < x2) ? (x1 + sx) : x2;
+		long r1 = (x1 + sx < x2) ? x2 : (x1 + sx);
+		long t1 = (y1 - sy < y2 - sy) ? (y1 - sy) : (y2 - sy);
+		long b1 = (y1 - sy < y2 - sy) ? (y2 - sy) : (y1 - sy);
+
+		long l2 = (x1 < x2 - sx) ? x1 : (x2 - sx);
+		long r2 = (x1 < x2 - sx) ? (x2 - sx) : x1;
+		long t2 = (y1 + sy < y2) ? (y1 + sy) : y2;
+		long b2 = (y1 + sy < y2) ? y2 : (y1 + sy);
+
+		fwprintf(fout, L"  <rect x=\"%ld\" y=\"%ld\" width=\"%ld\" height=\"%ld\" fill=\"none\"", l1, t1, r1 - l1, b1 - t1);
+		WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+		fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+
+		fwprintf(fout, L"  <rect x=\"%ld\" y=\"%ld\" width=\"%ld\" height=\"%ld\" fill=\"none\"", l2, t2, r2 - l2, b2 - t2);
+		WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+		fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+
+		const POINT edges[4][2] = {
+			{ { x1, y1 },{ x1 + sx, y1 - sy } },
+			{ { x2 - sx, y1 },{ x2, y1 - sy } },
+			{ { x1, y2 + sy },{ x1 + sx, y2 } },
+			{ { x2 - sx, y2 + sy },{ x2, y2 } }
+		};
+		for (int i = 0; i < 4; i++)
+		{
+			fwprintf(fout, L"  <line x1=\"%ld\" y1=\"%ld\" x2=\"%ld\" y2=\"%ld\"",
+				edges[i][0].x, edges[i][0].y, edges[i][1].x, edges[i][1].y);
+			WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+			fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+		}
+	}
 }
 
 void Cyl::Show(HDC hdc)
@@ -319,30 +623,112 @@ void Cyl::Show(HDC hdc)
 	long xold1 = x1, yold1 = y1;
 	long xold2 = x2, yold2 = y2;
 
-	long l, t, r, b;
-	NormalizeCoords(l, t, r, b);
+	long dy = y2 - y1;
+	long ry = dy / 4;
+	if (ry == 0 && dy != 0) ry = (dy > 0) ? 4 : -4;
 
-	long h = b - t;
-	long ry = h / 4;
-	if (ry < 4 && h >= 8) ry = 4;
+	long topY = y1;
+	long botY = y2;
 
-	// нижній кружок
-	Set(l, b - ry, r, b);
-	Elips::Show(hdc);
+	// Суцільна заливка тіла циліндра між верхньою та нижньою межами
+	if (hasFill && !rubber)
+	{
+		HPEN hNullPen = (HPEN)GetStockObject(NULL_PEN);
+		HBRUSH hFillBrush = CreateSolidBrush(fillColor);
+		HPEN hOldPen = (HPEN)SelectObject(hdc, hNullPen);
+		HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hFillBrush);
 
-	// лінії між кружками
-	Set(l, t + ry / 2, l, b - ry / 2);
-	Line::Show(hdc);
-	
-	// верхній кружок
-	Set(l, t, r, t + ry);
-	Elips::Show(hdc);
+		Rectangle(hdc, x1, topY + ry / 2, x2, botY - ry / 2);
+		Ellipse(hdc, x1, topY, x2, topY + ry);
+		Ellipse(hdc, x1, botY - ry, x2, botY);
 
+		SelectObject(hdc, hOldBrush);
+		SelectObject(hdc, hOldPen);
+		DeleteObject(hFillBrush);
+	}
 
-	Set(r, t + ry / 2, r, b - ry / 2);
-	Line::Show(hdc);
+	// Контури циліндра
+	if (hasBorder || rubber)
+	{
+		bool oldFill = hasFill;
+		hasFill = false;
+
+		Set(x1, botY - ry, x2, botY);
+		Elips::Show(hdc);
+
+		Set(x1, topY + ry / 2, x1, botY - ry / 2);
+		Line::Show(hdc);
+
+		Set(x2, topY + ry / 2, x2, botY - ry / 2);
+		Line::Show(hdc);
+
+		Set(x1, topY, x2, topY + ry);
+		Elips::Show(hdc);
+
+		hasFill = oldFill;
+	}
 
 	Set(xold1, yold1, xold2, yold2);
+	DrawSelection(hdc);
+}
+
+void Cyl::SerializeSvg(FILE* fout) const
+{
+	if (!fout) return;
+
+	long dy = y2 - y1;
+	long ry = dy / 4;
+	if (ry == 0 && dy != 0) ry = (dy > 0) ? 4 : -4;
+
+	long l = (x1 < x2) ? x1 : x2;
+	long r = (x1 < x2) ? x2 : x1;
+	long w = r - l;
+
+	long t1 = (y1 < y1 + ry) ? y1 : (y1 + ry);
+	long b1 = (y1 < y1 + ry) ? (y1 + ry) : y1;
+	long t2 = (y2 - ry < y2) ? (y2 - ry) : y2;
+	long b2 = (y2 - ry < y2) ? y2 : (y2 - ry);
+
+	if (hasFill)
+	{
+		long bodyT = (y1 + ry / 2 < y2 - ry / 2) ? (y1 + ry / 2) : (y2 - ry / 2);
+		long bodyH = (y2 - ry / 2 > y1 + ry / 2) ? ((y2 - ry / 2) - (y1 + ry / 2)) : ((y1 + ry / 2) - (y2 - ry / 2));
+
+		fwprintf(fout, L"  <rect x=\"%ld\" y=\"%ld\" width=\"%ld\" height=\"%ld\" stroke=\"none\"", l, bodyT, w, bodyH);
+		WriteSvgColorAttr(fout, L"fill", fillColor, true);
+		fwprintf(fout, L" />\n");
+
+		fwprintf(fout, L"  <ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" stroke=\"none\"",
+			(l + r) / 2.0, (t1 + b1) / 2.0, w / 2.0, (b1 - t1) / 2.0);
+		WriteSvgColorAttr(fout, L"fill", fillColor, true);
+		fwprintf(fout, L" />\n");
+
+		fwprintf(fout, L"  <ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" stroke=\"none\"",
+			(l + r) / 2.0, (t2 + b2) / 2.0, w / 2.0, (b2 - t2) / 2.0);
+		WriteSvgColorAttr(fout, L"fill", fillColor, true);
+		fwprintf(fout, L" />\n");
+	}
+
+	if (hasBorder)
+	{
+		fwprintf(fout, L"  <ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" fill=\"none\"",
+			(l + r) / 2.0, (t2 + b2) / 2.0, w / 2.0, (b2 - t2) / 2.0);
+		WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+		fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+
+		fwprintf(fout, L"  <line x1=\"%ld\" y1=\"%ld\" x2=\"%ld\" y2=\"%ld\"", x1, y1 + ry / 2, x1, y2 - ry / 2);
+		WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+		fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+
+		fwprintf(fout, L"  <line x1=\"%ld\" y1=\"%ld\" x2=\"%ld\" y2=\"%ld\"", x2, y1 + ry / 2, x2, y2 - ry / 2);
+		WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+		fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+
+		fwprintf(fout, L"  <ellipse cx=\"%.1f\" cy=\"%.1f\" rx=\"%.1f\" ry=\"%.1f\" fill=\"none\"",
+			(l + r) / 2.0, (t1 + b1) / 2.0, w / 2.0, (b1 - t1) / 2.0);
+		WriteSvgColorAttr(fout, L"stroke", borderColor, true);
+		fwprintf(fout, L" stroke-width=\"%d\" />\n", borderWidth);
+	}
 }
 
 // Текст
@@ -354,8 +740,7 @@ void Text::Show(HDC hdc)
 
 	if (rubber)
 	{
-		// під час розтягування мишею показує пунктирну рамку області в якій текст
-		HPEN hPen = CreateBorderPen();
+		HPEN hPen = CreatePen(PS_DOT, 1, RGB(0, 0, 0));
 		HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
 		HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
@@ -377,7 +762,7 @@ void Text::Show(HDC hdc)
 	);
 
 	HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
-	COLORREF oldTextColor = SetTextColor(hdc, borderColor);
+	COLORREF oldTextColor = SetTextColor(hdc, hasBorder ? borderColor : RGB(0, 0, 0));
 	int oldBkMode = SetBkMode(hdc, hasFill ? OPAQUE : TRANSPARENT);
 	COLORREF oldBkColor = hasFill ? SetBkColor(hdc, fillColor) : 0;
 
@@ -396,13 +781,14 @@ void Text::Show(HDC hdc)
 	SetTextColor(hdc, oldTextColor);
 	SelectObject(hdc, hOldFont);
 	DeleteObject(hFont);
+
+	DrawSelection(hdc);
 }
 
 void Text::Serialize(FILE* fout) const
 {
 	if (!fout) return;
 
-	// перетворює переноси рядків (\n міняє на \\n), щоб один об'єкт завжди займав один рядок у файлі
 	std::wstring escaped;
 	escaped.reserve(text.size());
 	for (wchar_t ch : text)
@@ -411,27 +797,28 @@ void Text::Serialize(FILE* fout) const
 		else if (ch != L'\r') escaped += ch;
 	}
 
-	fwprintf(fout, L"%s %ld %ld %ld %ld %lu %lu %d %d %s\n",
+	fwprintf(fout, L"%s %ld %ld %ld %ld %lu %lu %d %d %d %s\n",
 		GetTypeName(), x1, y1, x2, y2,
 		(unsigned long)borderColor, (unsigned long)fillColor,
-		hasFill ? 1 : 0, borderWidth, escaped.c_str());
+		hasBorder ? 1 : 0, hasFill ? 1 : 0, borderWidth, escaped.c_str());
 }
 
 bool Text::Deserialize(const WCHAR* params)
 {
 	if (!params) return false;
 	unsigned long bCol = 0, fCol = 0;
-	int filled = 0, width = 1;
+	int borderFlag = 1, filled = 0, width = 1;
 	int offset = 0;
 
-	if (swscanf_s(params, L"%ld %ld %ld %ld %lu %lu %d %d%n",
-		&x1, &y1, &x2, &y2, &bCol, &fCol, &filled, &width, &offset) < 8)
+	if (swscanf_s(params, L"%ld %ld %ld %ld %lu %lu %d %d %d%n",
+		&x1, &y1, &x2, &y2, &bCol, &fCol, &borderFlag, &filled, &width, &offset) < 9)
 	{
 		return false;
 	}
 
 	borderColor = (COLORREF)bCol;
 	fillColor = (COLORREF)fCol;
+	hasBorder = (borderFlag != 0);
 	hasFill = (filled != 0);
 	borderWidth = (width > 0) ? width : 1;
 
@@ -453,4 +840,14 @@ bool Text::Deserialize(const WCHAR* params)
 		}
 	}
 	return true;
+}
+
+void Text::SerializeSvg(FILE* fout) const
+{
+	if (!fout || text.empty()) return;
+	int fontSize = 16 + borderWidth * 4;
+	fwprintf(fout, L"  <text x=\"%ld\" y=\"%ld\" font-family=\"Segoe UI, sans-serif\" font-size=\"%d\"",
+		x1, y1 + fontSize, fontSize);
+	WriteSvgColorAttr(fout, L"fill", hasBorder ? borderColor : RGB(0, 0, 0), true);
+	fwprintf(fout, L">%s</text>\n", text.c_str());
 }
