@@ -88,7 +88,7 @@ void Toolbar::Create(HWND hWndParent, HINSTANCE hInst)
 	TBBUTTONINFO tbbi = {};
 	tbbi.cbSize = sizeof(TBBUTTONINFO);
 	tbbi.dwMask = TBIF_SIZE;
-	tbbi.cx = 30;
+	tbbi.cx = 54;
 	SendMessage(hWndToolbar, TB_SETBUTTONINFOW, IDM_BORDER_COLOR, (LPARAM)&tbbi);
 	SendMessage(hWndToolbar, TB_SETBUTTONINFOW, IDM_FILL_COLOR, (LPARAM)&tbbi);
 

@@ -32,7 +32,7 @@
 #define IDM_ELIPS                       32806
 #define IDM_CUBE                        32807
 #define IDM_CYL                         32808
-#define IDM_DO                          32812
+#define IDM_REDO                        32812
 #define IDM_UNDO                        32815
 #define IDM_TEXT                        32818
 #define IDM_FILL_COLOR                  32819

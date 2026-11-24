@@ -157,6 +157,8 @@
     <ClInclude Include="Resource.h" />
     <ClInclude Include="shape.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="toolbar.h" />
+    <ClInclude Include="viewer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ApostlesVector.cpp" />
@@ -167,6 +169,8 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="shape.cpp" />
+    <ClCompile Include="toolbar.cpp" />
+    <ClCompile Include="viewer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="ApostlesVector.rc" />
