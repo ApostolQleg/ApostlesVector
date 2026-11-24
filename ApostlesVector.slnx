@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="ApostlesVector.vcxproj" Id="84ccb33a-b82a-47fe-81b0-edcada726998" />
+</Solution>
