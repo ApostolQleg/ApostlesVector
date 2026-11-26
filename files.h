@@ -11,7 +11,6 @@ private:
 	bool WriteToFile(HWND hWnd, const std::wstring& path, const Viewer& viewer) const;
 	bool ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) const;
 	bool WriteSvgToFile(HWND hWnd, const std::wstring& path, const Viewer& viewer) const;
-
 	std::wstring ExtractFileName(const std::wstring& path) const;
 
 public:
@@ -19,7 +18,7 @@ public:
 	bool IsDirty() const { return isDirty; }
 	void UpdateWindowTitle(HWND hWnd) const;
 
-	bool ConfirmDiscardChanges(HWND hWnd, Viewer& viewer);
+	bool ConfirmDiscardChanges(HWND hWnd, const Viewer& viewer);
 
 	bool New(HWND hWnd, Viewer& viewer);
 	bool Open(HWND hWnd, Viewer& viewer);

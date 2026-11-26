@@ -1,24 +1,24 @@
 #include "pch.h"
-#include "framework.h"
 #include "ApostlesVector.h"
 #include "editor.h"
 
 constexpr int kMaxLoadString = 100;
 
-HINSTANCE hInst = nullptr;
-HWND hMainWnd = nullptr;
-WCHAR szTitle[kMaxLoadString] = {};
-WCHAR szWindowClass[kMaxLoadString] = {};
+static HINSTANCE gInstance = nullptr;
+static HWND gMainWnd = nullptr;
+static WCHAR gTitle[kMaxLoadString] = {};
+static WCHAR gWindowClass[kMaxLoadString] = {};
+static std::unique_ptr<Editor> gEditor;
 
-ATOM                MyRegisterClass(HINSTANCE hInstance);
-BOOL                InitInstance(HINSTANCE, int);
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+static ATOM RegisterMainWindowClass(HINSTANCE hInstance);
+static BOOL CreateMainWindow(HINSTANCE hInstance, int nCmdShow);
+static LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+static INT_PTR CALLBACK AboutDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	_In_opt_ HINSTANCE hPrevInstance,
-	_In_ LPWSTR    lpCmdLine,
-	_In_ int       nCmdShow)
+	_In_ LPWSTR lpCmdLine,
+	_In_ int nCmdShow)
 {
 	UNREFERENCED_PARAMETER(hPrevInstance);
 	UNREFERENCED_PARAMETER(lpCmdLine);
@@ -26,151 +26,140 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES };
 	InitCommonControlsEx(&icc);
 
-	LoadStringW(hInstance, IDS_APP_TITLE, szTitle, kMaxLoadString);
-	LoadStringW(hInstance, IDC_APOSTLESVECTOR, szWindowClass, kMaxLoadString);
-	MyRegisterClass(hInstance);
+	LoadStringW(hInstance, IDS_APP_TITLE, gTitle, kMaxLoadString);
+	LoadStringW(hInstance, IDC_APOSTLESVECTOR, gWindowClass, kMaxLoadString);
+	RegisterMainWindowClass(hInstance);
 
-	if (!InitInstance(hInstance, nCmdShow))
-	{
+	gEditor = std::make_unique<Editor>();
+
+	if (!CreateMainWindow(hInstance, nCmdShow))
 		return FALSE;
-	}
 
 	HACCEL hAccelTable = LoadAcceleratorsW(hInstance, MAKEINTRESOURCEW(IDC_APOSTLESVECTOR));
 
 	MSG msg = {};
 	while (GetMessageW(&msg, nullptr, 0, 0))
 	{
-		const bool skipAccel = Editor::GetInstance()->IsTextEditing();
-		if (skipAccel || !TranslateAcceleratorW(hMainWnd, hAccelTable, &msg))
+		const bool skipAccel = gEditor && gEditor->IsTextEditing();
+		if (skipAccel || !TranslateAcceleratorW(gMainWnd, hAccelTable, &msg))
 		{
 			TranslateMessage(&msg);
 			DispatchMessageW(&msg);
 		}
 	}
 
+	gEditor.reset();
 	return static_cast<int>(msg.wParam);
 }
 
-ATOM MyRegisterClass(HINSTANCE hInstance)
+static ATOM RegisterMainWindowClass(HINSTANCE hInstance)
 {
 	WNDCLASSEXW wcex = {};
-
 	wcex.cbSize = sizeof(WNDCLASSEXW);
 	wcex.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
-	wcex.lpfnWndProc = WndProc;
+	wcex.lpfnWndProc = MainWndProc;
 	wcex.hInstance = hInstance;
 	wcex.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APOSTLESVECTOR));
 	wcex.hCursor = LoadCursorW(nullptr, IDC_ARROW);
 	wcex.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
 	wcex.lpszMenuName = MAKEINTRESOURCEW(IDC_APOSTLESVECTOR);
-	wcex.lpszClassName = szWindowClass;
+	wcex.lpszClassName = gWindowClass;
 	wcex.hIconSm = LoadIconW(wcex.hInstance, MAKEINTRESOURCEW(IDI_SMALL));
-
 	return RegisterClassExW(&wcex);
 }
 
-BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
+static BOOL CreateMainWindow(HINSTANCE hInstance, int nCmdShow)
 {
-	hInst = hInstance;
-
-	HWND hWnd = CreateWindowW(szWindowClass, szTitle,
+	gInstance = hInstance;
+	HWND hWnd = CreateWindowW(gWindowClass, gTitle,
 		WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL | WS_CLIPCHILDREN,
 		CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
 
-	if (!hWnd)
-	{
-		return FALSE;
-	}
+	if (!hWnd) return FALSE;
 
-	hMainWnd = hWnd;
-
+	gMainWnd = hWnd;
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
-
 	return TRUE;
 }
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
 	case WM_CREATE:
-		Editor::GetInstance()->OnCreate(hWnd);
-		break;
+		if (gEditor) gEditor->OnCreate(hWnd);
+		return 0;
 	case WM_SIZE:
-		Editor::GetInstance()->OnSize(hWnd);
-		break;
+		if (gEditor) gEditor->OnSize(hWnd);
+		return 0;
 	case WM_NOTIFY:
-		return Editor::GetInstance()->OnNotify(lParam);
+		return gEditor ? gEditor->OnNotify(lParam) : 0;
 	case WM_ERASEBKGND:
 		return 1;
 	case WM_HSCROLL:
-		Editor::GetInstance()->OnHScroll(hWnd, wParam);
-		break;
+		if (gEditor) gEditor->OnHScroll(hWnd, wParam);
+		return 0;
 	case WM_VSCROLL:
-		Editor::GetInstance()->OnVScroll(hWnd, wParam);
-		break;
+		if (gEditor) gEditor->OnVScroll(hWnd, wParam);
+		return 0;
 	case WM_MOUSEWHEEL:
-		Editor::GetInstance()->OnMouseWheel(hWnd, wParam);
-		break;
+		if (gEditor) gEditor->OnMouseWheel(hWnd, wParam);
+		return 0;
 	case WM_LBUTTONDOWN:
-		Editor::GetInstance()->OnLBDown(hWnd, lParam);
-		break;
+		if (gEditor) gEditor->OnLBDown(hWnd, lParam);
+		return 0;
 	case WM_LBUTTONDBLCLK:
-		Editor::GetInstance()->OnLBDblClk(hWnd);
-		break;
+		if (gEditor) gEditor->OnLBDblClk(hWnd);
+		return 0;
 	case WM_MOUSEMOVE:
-		Editor::GetInstance()->OnMouseMove(hWnd, lParam);
-		break;
+		if (gEditor) gEditor->OnMouseMove(hWnd, lParam);
+		return 0;
 	case WM_LBUTTONUP:
-		Editor::GetInstance()->OnLBUp(hWnd, lParam);
-		break;
+		if (gEditor) gEditor->OnLBUp(hWnd, lParam);
+		return 0;
 	case WM_PAINT:
-		Editor::GetInstance()->OnPaint(hWnd);
-		break;
+		if (gEditor) gEditor->OnPaint(hWnd);
+		return 0;
 	case WM_INITMENUPOPUP:
-		Editor::GetInstance()->OnInitMenuPopup(hWnd);
-		break;
+		if (gEditor) gEditor->OnInitMenuPopup(hWnd);
+		return 0;
 	case WM_COMMAND:
 	{
-		if (Editor::GetInstance()->OnCommand(hWnd, wParam))
-			break;
+		if (gEditor && gEditor->OnCommand(hWnd, wParam))
+			return 0;
 
-		const int wmId = LOWORD(wParam);
-		switch (wmId)
+		switch (LOWORD(wParam))
 		{
 		case IDM_ABOUT:
-			DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_ABOUTBOX), hWnd, About);
-			break;
+			DialogBoxW(gInstance, MAKEINTRESOURCEW(IDD_ABOUTBOX), hWnd, AboutDialogProc);
+			return 0;
 		case IDM_EXIT:
 			SendMessageW(hWnd, WM_CLOSE, 0, 0);
-			break;
+			return 0;
 		default:
 			return DefWindowProcW(hWnd, message, wParam, lParam);
 		}
 	}
-	break;
 	case WM_CLOSE:
-		if (Editor::GetInstance()->OnClose(hWnd))
+		if (!gEditor || gEditor->OnClose(hWnd))
 			DestroyWindow(hWnd);
 		return 0;
 	case WM_DESTROY:
 		PostQuitMessage(0);
-		break;
+		return 0;
 	default:
 		return DefWindowProcW(hWnd, message, wParam, lParam);
 	}
-	return 0;
 }
 
-INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+static INT_PTR CALLBACK AboutDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	UNREFERENCED_PARAMETER(lParam);
 	switch (message)
 	{
 	case WM_INITDIALOG:
 		return TRUE;
-
 	case WM_COMMAND:
 		if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
 		{

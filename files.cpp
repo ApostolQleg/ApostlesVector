@@ -1,5 +1,4 @@
 #include "pch.h"
-#include "framework.h"
 #include "files.h"
 #include "viewer.h"
 #include "shape.h"
@@ -10,22 +9,15 @@ constexpr size_t kFileLineChunk = 2048;
 std::wstring Files::ExtractFileName(const std::wstring& path) const
 {
 	if (path.empty()) return L"Untitled";
-
 	const size_t pos = path.find_last_of(L"\\/");
-	if (pos == std::wstring::npos)
-		return path;
-
-	return path.substr(pos + 1);
+	return (pos == std::wstring::npos) ? path : path.substr(pos + 1);
 }
 
 void Files::UpdateWindowTitle(HWND hWnd) const
 {
 	if (!hWnd) return;
-
 	std::wstring title = L"ApostlesVector - " + ExtractFileName(currentFilePath);
-	if (isDirty)
-		title += L"*";
-
+	if (isDirty) title += L"*";
 	SetWindowTextW(hWnd, title.c_str());
 }
 
@@ -38,7 +30,7 @@ void Files::MarkDirty(HWND hWnd)
 	}
 }
 
-bool Files::ConfirmDiscardChanges(HWND hWnd, Viewer& viewer)
+bool Files::ConfirmDiscardChanges(HWND hWnd, const Viewer& viewer)
 {
 	if (!isDirty) return true;
 
@@ -46,12 +38,10 @@ bool Files::ConfirmDiscardChanges(HWND hWnd, Viewer& viewer)
 		hWnd,
 		L"Save changes to the current scene?",
 		L"ApostlesVector",
-		MB_YESNOCANCEL | MB_ICONQUESTION
-	);
+		MB_YESNOCANCEL | MB_ICONQUESTION);
 
 	if (res == IDYES)
 		return Save(hWnd, viewer);
-
 	return (res == IDNO);
 }
 
@@ -65,7 +55,7 @@ bool Files::WriteToFile(HWND hWnd, const std::wstring& path, const Viewer& viewe
 	}
 
 	const int count = viewer.GetCount();
-	fwprintf(fout, L"APOSTLES_VECTOR 1.1\n");
+	fwprintf(fout, L"APOSTLES_VECTOR 1.2\n");
 	fwprintf(fout, L"COUNT %d\n", count);
 
 	for (int i = 0; i < count; ++i)
@@ -103,11 +93,7 @@ bool Files::ReadFromFile(HWND hWnd, const std::wstring& path, Viewer& viewer) co
 		while (!lineStr.empty() && (lineStr.back() == L'\n' || lineStr.back() == L'\r'))
 			lineStr.pop_back();
 
-		if (lineStr.empty())
-		{
-			lineStr.clear();
-			continue;
-		}
+		if (lineStr.empty()) continue;
 
 		WCHAR typeName[64] = {};
 		int offset = 0;
@@ -168,8 +154,7 @@ bool Files::WriteSvgToFile(HWND hWnd, const std::wstring& path, const Viewer& vi
 	fwprintf(fout, L"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\">\n",
 		kSceneWidth, kSceneHeight, kSceneWidth, kSceneHeight);
 
-	const int count = viewer.GetCount();
-	for (int i = 0; i < count; ++i)
+	for (int i = 0; i < viewer.GetCount(); ++i)
 	{
 		if (const Shape* shape = viewer.GetShape(i))
 			shape->SerializeSvg(fout);
@@ -189,8 +174,7 @@ bool Files::New(HWND hWnd, Viewer& viewer)
 	currentFilePath.clear();
 	isDirty = false;
 	UpdateWindowTitle(hWnd);
-
-	if (hWnd) InvalidateRect(hWnd, nullptr, FALSE);
+	viewer.InvalidateCanvas(hWnd);
 	return true;
 }
 
@@ -200,7 +184,6 @@ bool Files::Open(HWND hWnd, Viewer& viewer)
 		return false;
 
 	WCHAR fileBuf[MAX_PATH] = {};
-
 	OPENFILENAMEW ofn = {};
 	ofn.lStructSize = sizeof(OPENFILENAMEW);
 	ofn.hwndOwner = hWnd;
@@ -210,11 +193,8 @@ bool Files::Open(HWND hWnd, Viewer& viewer)
 	ofn.lpstrDefExt = L"avec";
 	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
 
-	if (!GetOpenFileNameW(&ofn))
-		return false;
-
-	if (!ReadFromFile(hWnd, fileBuf, viewer))
-		return false;
+	if (!GetOpenFileNameW(&ofn)) return false;
+	if (!ReadFromFile(hWnd, fileBuf, viewer)) return false;
 
 	currentFilePath = fileBuf;
 	isDirty = false;
@@ -223,7 +203,7 @@ bool Files::Open(HWND hWnd, Viewer& viewer)
 	if (hWnd)
 	{
 		viewer.UpdateScrollBars(hWnd);
-		InvalidateRect(hWnd, nullptr, FALSE);
+		viewer.InvalidateCanvas(hWnd);
 	}
 	return true;
 }
@@ -232,7 +212,6 @@ bool Files::Save(HWND hWnd, const Viewer& viewer)
 {
 	if (currentFilePath.empty())
 		return SaveAs(hWnd, viewer);
-
 	if (!WriteToFile(hWnd, currentFilePath, viewer))
 		return false;
 
@@ -245,9 +224,7 @@ bool Files::SaveAs(HWND hWnd, const Viewer& viewer)
 {
 	WCHAR fileBuf[MAX_PATH] = L"scene.avec";
 	if (!currentFilePath.empty())
-	{
 		wcsncpy_s(fileBuf, currentFilePath.c_str(), _TRUNCATE);
-	}
 
 	OPENFILENAMEW ofn = {};
 	ofn.lStructSize = sizeof(OPENFILENAMEW);
@@ -258,11 +235,8 @@ bool Files::SaveAs(HWND hWnd, const Viewer& viewer)
 	ofn.lpstrDefExt = L"avec";
 	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
 
-	if (!GetSaveFileNameW(&ofn))
-		return false;
-
-	if (!WriteToFile(hWnd, fileBuf, viewer))
-		return false;
+	if (!GetSaveFileNameW(&ofn)) return false;
+	if (!WriteToFile(hWnd, fileBuf, viewer)) return false;
 
 	currentFilePath = fileBuf;
 	isDirty = false;
@@ -273,7 +247,6 @@ bool Files::SaveAs(HWND hWnd, const Viewer& viewer)
 bool Files::ExportSvg(HWND hWnd, const Viewer& viewer) const
 {
 	WCHAR fileBuf[MAX_PATH] = L"scene.svg";
-
 	OPENFILENAMEW ofn = {};
 	ofn.lStructSize = sizeof(OPENFILENAMEW);
 	ofn.hwndOwner = hWnd;
@@ -283,8 +256,6 @@ bool Files::ExportSvg(HWND hWnd, const Viewer& viewer) const
 	ofn.lpstrDefExt = L"svg";
 	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
 
-	if (!GetSaveFileNameW(&ofn))
-		return false;
-
+	if (!GetSaveFileNameW(&ofn)) return false;
 	return WriteSvgToFile(hWnd, fileBuf, viewer);
 }

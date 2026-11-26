@@ -1,7 +1,15 @@
 #include "pch.h"
-#include "framework.h"
 #include "viewer.h"
-#include <algorithm>
+
+SceneSnapshot SceneSnapshot::Clone() const
+{
+	SceneSnapshot copy;
+	copy.shapes.reserve(shapes.size());
+	for (const auto& s : shapes)
+		copy.shapes.push_back(s ? s->Clone() : nullptr);
+	copy.selectedIndices = selectedIndices;
+	return copy;
+}
 
 void Viewer::RefreshSelectionFlags()
 {
@@ -14,9 +22,37 @@ void Viewer::RefreshSelectionFlags()
 	const bool isGroup = (selectedIndices.size() > 1);
 	for (int idx : selectedIndices)
 	{
-		if (idx >= 0 && idx < static_cast<int>(shapes.size()) && shapes[idx])
-			shapes[idx]->SetSelected(true, isGroup);
+		if (Shape* shape = GetShape(idx))
+			shape->SetSelected(true, isGroup);
 	}
+}
+
+std::vector<bool> Viewer::BuildSelectionMask() const
+{
+	std::vector<bool> mask(shapes.size(), false);
+	for (int idx : selectedIndices)
+	{
+		if (idx >= 0 && idx < static_cast<int>(shapes.size()))
+			mask[idx] = true;
+	}
+	return mask;
+}
+
+void Viewer::RebuildSelectionFromMask(const std::vector<bool>& mask)
+{
+	selectedIndices.clear();
+	for (int i = 0; i < static_cast<int>(mask.size()); ++i)
+	{
+		if (mask[i])
+			selectedIndices.push_back(i);
+	}
+	RefreshSelectionFlags();
+}
+
+void Viewer::SetSelectionMarquee(bool active, long x1, long y1, long x2, long y2)
+{
+	hasMarquee = active;
+	marqueeRect = { std::min(x1, x2), std::min(y1, y2), std::max(x1, x2), std::max(y1, y2) };
 }
 
 void Viewer::AddShape(std::unique_ptr<Shape> shape)
@@ -25,33 +61,179 @@ void Viewer::AddShape(std::unique_ptr<Shape> shape)
 		shapes.push_back(std::move(shape));
 }
 
-std::unique_ptr<Shape> Viewer::RemoveLastShape()
+bool Viewer::DeleteSelected()
 {
-	if (shapes.empty()) return nullptr;
+	if (selectedIndices.empty()) return false;
+	const auto mask = BuildSelectionMask();
 
-	const int lastIdx = static_cast<int>(shapes.size()) - 1;
-	auto last = std::move(shapes.back());
-	shapes.pop_back();
+	std::vector<std::unique_ptr<Shape>> remaining;
+	remaining.reserve(shapes.size() - selectedIndices.size());
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (!mask[i])
+			remaining.push_back(std::move(shapes[i]));
+	}
 
-	std::erase(selectedIndices, lastIdx);
+	shapes = std::move(remaining);
+	selectedIndices.clear();
 	RefreshSelectionFlags();
-
-	return last;
-}
-
-void Viewer::ReplaceShapeAt(int index, std::unique_ptr<Shape> shape)
-{
-	if (!shape || index < 0 || index >= static_cast<int>(shapes.size()))
-		return;
-
-	shape->SetSelected(false, false);
-	shapes[index] = std::move(shape);
+	return true;
 }
 
 void Viewer::Clear()
 {
 	shapes.clear();
 	selectedIndices.clear();
+	previewShape = nullptr;
+	hasMarquee = false;
+}
+
+SceneSnapshot Viewer::CaptureSnapshot() const
+{
+	SceneSnapshot snap;
+	snap.shapes.reserve(shapes.size());
+	for (const auto& s : shapes)
+	{
+		auto clone = s ? s->Clone() : nullptr;
+		if (clone) clone->SetSelected(false, false);
+		snap.shapes.push_back(std::move(clone));
+	}
+	snap.selectedIndices = selectedIndices;
+	return snap;
+}
+
+void Viewer::RestoreSnapshot(const SceneSnapshot& snapshot)
+{
+	shapes.clear();
+	shapes.reserve(snapshot.shapes.size());
+	for (const auto& s : snapshot.shapes)
+		shapes.push_back(s ? s->Clone() : nullptr);
+
+	selectedIndices = snapshot.selectedIndices;
+	RefreshSelectionFlags();
+}
+
+bool Viewer::BringSelectedToFront()
+{
+	if (selectedIndices.empty() || shapes.size() <= 1) return false;
+	const auto mask = BuildSelectionMask();
+
+	std::vector<std::unique_ptr<Shape>> reordered;
+	std::vector<int> newSel;
+	reordered.reserve(shapes.size());
+
+	bool changed = false;
+	bool seenSelected = false;
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (mask[i]) seenSelected = true;
+		else if (seenSelected) changed = true;
+	}
+	if (!changed) return false;
+
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (!mask[i]) reordered.push_back(std::move(shapes[i]));
+	}
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (mask[i])
+		{
+			newSel.push_back(static_cast<int>(reordered.size()));
+			reordered.push_back(std::move(shapes[i]));
+		}
+	}
+
+	shapes = std::move(reordered);
+	selectedIndices = std::move(newSel);
+	RefreshSelectionFlags();
+	return true;
+}
+
+bool Viewer::SendSelectedToBack()
+{
+	if (selectedIndices.empty() || shapes.size() <= 1) return false;
+	const auto mask = BuildSelectionMask();
+
+	bool changed = false;
+	bool seenUnselected = false;
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (!mask[i]) seenUnselected = true;
+		else if (seenUnselected) changed = true;
+	}
+	if (!changed) return false;
+
+	std::vector<std::unique_ptr<Shape>> reordered;
+	std::vector<int> newSel;
+	reordered.reserve(shapes.size());
+
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (mask[i])
+		{
+			newSel.push_back(static_cast<int>(reordered.size()));
+			reordered.push_back(std::move(shapes[i]));
+		}
+	}
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (!mask[i]) reordered.push_back(std::move(shapes[i]));
+	}
+
+	shapes = std::move(reordered);
+	selectedIndices = std::move(newSel);
+	RefreshSelectionFlags();
+	return true;
+}
+
+bool Viewer::BringSelectedForward()
+{
+	if (selectedIndices.empty() || shapes.size() <= 1) return false;
+	auto mask = BuildSelectionMask();
+	bool changed = false;
+
+	for (int i = static_cast<int>(shapes.size()) - 2; i >= 0; --i)
+	{
+		if (mask[i] && !mask[i + 1])
+		{
+			std::swap(shapes[i], shapes[i + 1]);
+			mask[i] = false;
+			mask[i + 1] = true;
+			changed = true;
+		}
+	}
+
+	if (changed) RebuildSelectionFromMask(mask);
+	return changed;
+}
+
+bool Viewer::SendSelectedBackward()
+{
+	if (selectedIndices.empty() || shapes.size() <= 1) return false;
+	auto mask = BuildSelectionMask();
+	bool changed = false;
+
+	for (int i = 1; i < static_cast<int>(shapes.size()); ++i)
+	{
+		if (mask[i] && !mask[i - 1])
+		{
+			std::swap(shapes[i], shapes[i - 1]);
+			mask[i] = false;
+			mask[i - 1] = true;
+			changed = true;
+		}
+	}
+
+	if (changed) RebuildSelectionFromMask(mask);
+	return changed;
+}
+
+Shape* Viewer::GetShape(int index) const
+{
+	if (index >= 0 && index < static_cast<int>(shapes.size()))
+		return shapes[index].get();
+	return nullptr;
 }
 
 void Viewer::ClearSelection()
@@ -97,28 +279,24 @@ int Viewer::SelectAt(long sceneX, long sceneY)
 		SelectIndex(hit);
 		return hit;
 	}
-
 	ClearSelection();
 	return -1;
 }
 
 int Viewer::SelectInRect(long x1, long y1, long x2, long y2)
 {
-	const long l = (x1 < x2) ? x1 : x2;
-	const long r = (x1 < x2) ? x2 : x1;
-	const long t = (y1 < y2) ? y1 : y2;
-	const long b = (y1 < y2) ? y2 : y1;
+	const long l = std::min(x1, x2);
+	const long r = std::max(x1, x2);
+	const long t = std::min(y1, y2);
+	const long b = std::max(y1, y2);
 
 	selectedIndices.clear();
 	for (int i = 0; i < static_cast<int>(shapes.size()); ++i)
 	{
 		if (!shapes[i]) continue;
-
-		long sl, st, sr, sb;
+		long sl = 0, st = 0, sr = 0, sb = 0;
 		shapes[i]->GetBounds(sl, st, sr, sb);
-
-		const bool intersects = !(sr < l || sl > r || sb < t || st > b);
-		if (intersects)
+		if (!(sr < l || sl > r || sb < t || st > b))
 			selectedIndices.push_back(i);
 	}
 
@@ -126,29 +304,14 @@ int Viewer::SelectInRect(long x1, long y1, long x2, long y2)
 	return static_cast<int>(selectedIndices.size());
 }
 
-int Viewer::FindShapeIndex(const Shape* target) const
-{
-	if (!target) return -1;
-	for (int i = 0; i < static_cast<int>(shapes.size()); ++i)
-	{
-		if (shapes[i].get() == target)
-			return i;
-	}
-	return -1;
-}
-
 Shape* Viewer::GetSingleSelectedShape() const
 {
-	if (selectedIndices.size() == 1)
-		return GetShape(selectedIndices[0]);
-	return nullptr;
+	return (selectedIndices.size() == 1) ? GetShape(selectedIndices[0]) : nullptr;
 }
 
 Shape* Viewer::GetPrimarySelectedShape() const
 {
-	if (!selectedIndices.empty())
-		return GetShape(selectedIndices[0]);
-	return nullptr;
+	return !selectedIndices.empty() ? GetShape(selectedIndices[0]) : nullptr;
 }
 
 bool Viewer::GetSelectionBounds(long& l, long& t, long& r, long& b) const
@@ -159,7 +322,7 @@ bool Viewer::GetSelectionBounds(long& l, long& t, long& r, long& b) const
 		const Shape* shape = GetShape(idx);
 		if (!shape) continue;
 
-		long sl, st, sr, sb;
+		long sl = 0, st = 0, sr = 0, sb = 0;
 		shape->GetBounds(sl, st, sr, sb);
 		if (!hasAny)
 		{
@@ -168,10 +331,8 @@ bool Viewer::GetSelectionBounds(long& l, long& t, long& r, long& b) const
 		}
 		else
 		{
-			if (sl < l) l = sl;
-			if (st < t) t = st;
-			if (sr > r) r = sr;
-			if (sb > b) b = sb;
+			l = std::min(l, sl); t = std::min(t, st);
+			r = std::max(r, sr); b = std::max(b, sb);
 		}
 	}
 	return hasAny;
@@ -179,26 +340,22 @@ bool Viewer::GetSelectionBounds(long& l, long& t, long& r, long& b) const
 
 int Viewer::HitSelectionHandle(long sx, long sy) const
 {
-	if (selectedIndices.empty())
-		return -1;
-
+	if (selectedIndices.empty()) return -1;
 	if (selectedIndices.size() == 1)
 	{
 		const Shape* sel = GetShape(selectedIndices[0]);
 		return sel ? sel->HitHandle(sx, sy) : -1;
 	}
 
-	long l, t, r, b;
-	if (!GetSelectionBounds(l, t, r, b))
-		return -1;
-
+	// Для групи повертаємо лише маркери масштабування (без маркера обертання)
+	long l = 0, t = 0, r = 0, b = 0;
+	if (!GetSelectionBounds(l, t, r, b)) return -1;
 	return Shape::HitBoxHandle(l, t, r, b, sx, sy);
 }
 
 bool Viewer::IsPointInSelection(long sx, long sy) const
 {
-	if (selectedIndices.empty())
-		return false;
+	if (selectedIndices.empty()) return false;
 
 	const int hit = HitTestTopShape(sx, sy);
 	if (hit >= 0 && IsShapeSelected(hit))
@@ -206,14 +363,13 @@ bool Viewer::IsPointInSelection(long sx, long sy) const
 
 	if (selectedIndices.size() > 1)
 	{
-		long l, t, r, b;
+		long l = 0, t = 0, r = 0, b = 0;
 		if (GetSelectionBounds(l, t, r, b))
 		{
 			return (sx >= l - kSelectionMargin && sx <= r + kSelectionMargin &&
 				sy >= t - kSelectionMargin && sy <= b + kSelectionMargin);
 		}
 	}
-
 	return false;
 }
 
@@ -233,50 +389,35 @@ bool Viewer::MoveSelectedBy(long dx, long dy)
 void Viewer::InvalidateCanvas(HWND hWnd) const
 {
 	if (!hWnd) return;
-
 	RECT rc = {};
 	GetClientRect(hWnd, &rc);
 	rc.top = topOffset;
 	if (rc.bottom > rc.top)
-	{
 		InvalidateRect(hWnd, &rc, FALSE);
-	}
 }
 
 void Viewer::UpdateScrollBars(HWND hWnd)
 {
 	if (!hWnd) return;
-
 	RECT rc = {};
 	GetClientRect(hWnd, &rc);
 
-	int clientW = rc.right - rc.left;
-	int clientH = (rc.bottom - rc.top) - topOffset;
-	if (clientW < 0) clientW = 0;
-	if (clientH < 0) clientH = 0;
+	const int clientW = std::max<int>(0, rc.right - rc.left);
+	const int clientH = std::max<int>(0, (rc.bottom - rc.top) - topOffset);
 
-	const int maxScrollX = (kSceneWidth > clientW) ? (kSceneWidth - clientW) : 0;
-	const int maxScrollY = (kSceneHeight > clientH) ? (kSceneHeight - clientH) : 0;
-
-	if (scrollX > maxScrollX) scrollX = maxScrollX;
-	if (scrollX < 0) scrollX = 0;
-	if (scrollY > maxScrollY) scrollY = maxScrollY;
-	if (scrollY < 0) scrollY = 0;
+	scrollX = std::clamp(scrollX, 0, std::max(0, kSceneWidth - clientW));
+	scrollY = std::clamp(scrollY, 0, std::max(0, kSceneHeight - clientH));
 
 	SCROLLINFO si = {};
 	si.cbSize = sizeof(SCROLLINFO);
 	si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
 
-	si.nMin = 0;
-	si.nMax = kSceneWidth - 1;
-	si.nPage = static_cast<UINT>(clientW);
-	si.nPos = scrollX;
+	si.nMin = 0; si.nMax = kSceneWidth - 1;
+	si.nPage = static_cast<UINT>(clientW); si.nPos = scrollX;
 	SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
 
-	si.nMin = 0;
-	si.nMax = kSceneHeight - 1;
-	si.nPage = static_cast<UINT>(clientH);
-	si.nPos = scrollY;
+	si.nMin = 0; si.nMax = kSceneHeight - 1;
+	si.nPage = static_cast<UINT>(clientH); si.nPos = scrollY;
 	SetScrollInfo(hWnd, SB_VERT, &si, TRUE);
 }
 
@@ -289,7 +430,7 @@ void Viewer::HandleScroll(HWND hWnd, int barType, WPARAM wParam, int& scrollPos,
 
 	int newPos = scrollPos;
 	constexpr int lineStep = 20;
-	const int pageStep = (pageSize > lineStep) ? (pageSize - lineStep) : lineStep;
+	const int pageStep = std::max(lineStep, pageSize - lineStep);
 
 	switch (LOWORD(wParam))
 	{
@@ -307,10 +448,7 @@ void Viewer::HandleScroll(HWND hWnd, int barType, WPARAM wParam, int& scrollPos,
 		return;
 	}
 
-	const int maxPos = (maxSize > pageSize) ? (maxSize - pageSize) : 0;
-	if (newPos < 0) newPos = 0;
-	if (newPos > maxPos) newPos = maxPos;
-
+	newPos = std::clamp(newPos, 0, std::max(0, maxSize - pageSize));
 	if (newPos != scrollPos)
 	{
 		scrollPos = newPos;
@@ -325,25 +463,20 @@ void Viewer::OnHScroll(HWND hWnd, WPARAM wParam)
 {
 	RECT rc = {};
 	GetClientRect(hWnd, &rc);
-	const int clientW = rc.right - rc.left;
-
-	HandleScroll(hWnd, SB_HORZ, wParam, scrollX, clientW, kSceneWidth);
+	HandleScroll(hWnd, SB_HORZ, wParam, scrollX, rc.right - rc.left, kSceneWidth);
 }
 
 void Viewer::OnVScroll(HWND hWnd, WPARAM wParam)
 {
 	RECT rc = {};
 	GetClientRect(hWnd, &rc);
-	int clientH = (rc.bottom - rc.top) - topOffset;
-	if (clientH < 0) clientH = 0;
-
+	const int clientH = std::max<int>(0, (rc.bottom - rc.top) - topOffset);
 	HandleScroll(hWnd, SB_VERT, wParam, scrollY, clientH, kSceneHeight);
 }
 
 void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 {
-	const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-	const int step = -(delta / WHEEL_DELTA) * 40;
+	const int step = -(GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA) * 40;
 	if (step == 0) return;
 
 	RECT rc = {};
@@ -351,12 +484,8 @@ void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 
 	if (LOWORD(wParam) & MK_SHIFT)
 	{
-		const int clientW = rc.right - rc.left;
-		const int maxPos = (kSceneWidth > clientW) ? (kSceneWidth - clientW) : 0;
-		int newPos = scrollX + step;
-		if (newPos < 0) newPos = 0;
-		if (newPos > maxPos) newPos = maxPos;
-
+		const int maxPos = std::max<int>(0, kSceneWidth - (rc.right - rc.left));
+		const int newPos = std::clamp(scrollX + step, 0, maxPos);
 		if (newPos != scrollX)
 		{
 			scrollX = newPos;
@@ -366,13 +495,9 @@ void Viewer::OnMouseWheel(HWND hWnd, WPARAM wParam)
 	}
 	else
 	{
-		int clientH = (rc.bottom - rc.top) - topOffset;
-		if (clientH < 0) clientH = 0;
-		const int maxPos = (kSceneHeight > clientH) ? (kSceneHeight - clientH) : 0;
-		int newPos = scrollY + step;
-		if (newPos < 0) newPos = 0;
-		if (newPos > maxPos) newPos = maxPos;
-
+		const int clientH = std::max<int>(0, (rc.bottom - rc.top) - topOffset);
+		const int maxPos = std::max(0, kSceneHeight - clientH);
+		const int newPos = std::clamp(scrollY + step, 0, maxPos);
 		if (newPos != scrollY)
 		{
 			scrollY = newPos;
@@ -386,23 +511,17 @@ void Viewer::ScreenToScene(long clientX, long clientY, long& sceneX, long& scene
 {
 	sceneX = clientX + scrollX;
 	sceneY = (clientY - topOffset) + scrollY;
-
 	if (clampToScene)
 	{
-		if (sceneX < 0) sceneX = 0;
-		if (sceneX > kSceneWidth) sceneX = kSceneWidth;
-		if (sceneY < 0) sceneY = 0;
-		if (sceneY > kSceneHeight) sceneY = kSceneHeight;
+		sceneX = std::clamp<long>(sceneX, 0, kSceneWidth);
+		sceneY = std::clamp<long>(sceneY, 0, kSceneHeight);
 	}
 }
 
-void Viewer::BeginCanvasDraw(HDC hdc, HWND hWnd) const
+void Viewer::SceneToClient(long sceneX, long sceneY, long& clientX, long& clientY) const
 {
-	RECT rc = {};
-	GetClientRect(hWnd, &rc);
-
-	IntersectClipRect(hdc, 0, topOffset, rc.right, rc.bottom);
-	SetViewportOrgEx(hdc, -scrollX, topOffset - scrollY, nullptr);
+	clientX = sceneX - scrollX;
+	clientY = sceneY + topOffset - scrollY;
 }
 
 void Viewer::Render(HWND hWnd) const
@@ -421,38 +540,53 @@ void Viewer::Render(HWND hWnd) const
 		HBITMAP memBmp = CreateCompatibleBitmap(hdc, width, height);
 		HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDC, memBmp));
 
+		SetGraphicsMode(memDC, GM_ADVANCED);
+
 		HBRUSH hOuterBrush = CreateSolidBrush(RGB(235, 235, 235));
 		FillRect(memDC, &rc, hOuterBrush);
 		DeleteObject(hOuterBrush);
 
-		BeginCanvasDraw(memDC, hWnd);
+		IntersectClipRect(memDC, 0, topOffset, rc.right, rc.bottom);
+		SetViewportOrgEx(memDC, -scrollX, topOffset - scrollY, nullptr);
 
 		HPEN hBorderPen = CreatePen(PS_SOLID, 1, RGB(180, 180, 180));
 		HPEN hOldPen = static_cast<HPEN>(SelectObject(memDC, hBorderPen));
 		HBRUSH hOldBrush = static_cast<HBRUSH>(SelectObject(memDC, GetStockObject(WHITE_BRUSH)));
-
 		Rectangle(memDC, 0, 0, kSceneWidth, kSceneHeight);
-
 		SelectObject(memDC, hOldBrush);
 		SelectObject(memDC, hOldPen);
 		DeleteObject(hBorderPen);
 
 		for (const auto& shape : shapes)
 		{
-			if (shape)
-				shape->Show(memDC);
+			if (shape) shape->Show(memDC);
 		}
+
+		// Живий попередній перегляд фігури в її остаточному вигляді
+		if (previewShape)
+			previewShape->Show(memDC);
 
 		if (selectedIndices.size() > 1)
 		{
-			long gl, gt, gr, gb;
+			long gl = 0, gt = 0, gr = 0, gb = 0;
 			if (GetSelectionBounds(gl, gt, gr, gb))
 				Shape::DrawBoxSelectionFrame(memDC, gl, gt, gr, gb, true);
 		}
 
+		if (hasMarquee)
+		{
+			HPEN hMarqueePen = CreatePen(PS_DOT, 1, RGB(0, 120, 215));
+			HPEN hPrevPen = static_cast<HPEN>(SelectObject(memDC, hMarqueePen));
+			HBRUSH hPrevBrush = static_cast<HBRUSH>(SelectObject(memDC, GetStockObject(NULL_BRUSH)));
+			SetBkMode(memDC, TRANSPARENT);
+			Rectangle(memDC, marqueeRect.left, marqueeRect.top, marqueeRect.right, marqueeRect.bottom);
+			SelectObject(memDC, hPrevBrush);
+			SelectObject(memDC, hPrevPen);
+			DeleteObject(hMarqueePen);
+		}
+
 		SetViewportOrgEx(memDC, 0, 0, nullptr);
 		SelectClipRgn(memDC, nullptr);
-
 		BitBlt(hdc, 0, topOffset, width, height - topOffset, memDC, 0, topOffset, SRCCOPY);
 
 		SelectObject(memDC, oldBmp);

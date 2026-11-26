@@ -12,9 +12,6 @@
 #define IDI_SMALL                       108
 #define IDC_APOSTLESVECTOR              109
 #define IDR_MAINFRAME                   128
-#define IDB_TOOLBAR                     130
-#define IDD_TEXT_DIALOG                 131
-#define IDC_TEXT_EDIT                   1000
 #define IDM_NEW                         32772
 #define IDM_OPEN                        32776
 #define IDM_SAVE                        32777
@@ -45,6 +42,13 @@
 #define IDM_SELECT                      32829
 #define IDM_SELECT_AREA                 32830
 #define IDM_EXPORT_SVG                  32840
+#define IDM_DELETE                      32841
+#define IDM_FLIP_H                      32842
+#define IDM_FLIP_V                      32843
+#define IDM_Z_FRONT                     32844
+#define IDM_Z_UP                        32845
+#define IDM_Z_DOWN                      32846
+#define IDM_Z_BACK                      32847
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -53,7 +57,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        132
-#define _APS_NEXT_COMMAND_VALUE         32841
+#define _APS_NEXT_COMMAND_VALUE         32846
 #define _APS_NEXT_CONTROL_VALUE         1001
 #define _APS_NEXT_SYMED_VALUE           110
 #endif

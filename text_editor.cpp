@@ -1,7 +1,6 @@
 #include "pch.h"
-#include "framework.h"
-#include "text.h"
-#include "shape.h"
+#include "text_editor.h"
+#include "shape_text.h"
 #include "viewer.h"
 
 constexpr long kMinTextBoxWidth = 180;
@@ -63,12 +62,11 @@ void InplaceTextEditor::Begin(HWND hParent, const Viewer& viewer, Text* target,
 	long cx = 0, cy = 0;
 	viewer.SceneToClient(l, t, cx, cy);
 
-	const int bw = target ? target->GetBorderWidth() : defaultBorderWidth;
+	const int bw = target ? target->GetStyle().borderWidth : defaultBorderWidth;
 	hFont = CreateFontW(16 + bw * 4, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
 		DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
 		CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
 
-	// У фігурі переноси зберігаються як '\n', а елемент EDIT потребує "\r\n"
 	std::wstring initial;
 	if (target)
 	{
@@ -106,7 +104,7 @@ TextEditResult InplaceTextEditor::End(HWND hParent, bool commit)
 	if (!hEdit) return result;
 
 	HWND hLocal = hEdit;
-	hEdit = nullptr; // Захист від повторного входу через EN_KILLFOCUS
+	hEdit = nullptr;
 
 	std::wstring cleanText;
 	if (commit)
