@@ -66,6 +66,7 @@ public:
 	Editor& operator=(const Editor&) = delete;
 
 	bool IsTextEditing() const { return textEditor.IsActive(); }
+	void OpenFile(HWND hWnd, const std::wstring& filePath);
 
 	void OnCreate(HWND hWnd);
 	void OnSize(HWND hWnd);

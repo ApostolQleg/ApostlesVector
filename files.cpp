@@ -178,6 +178,23 @@ bool Files::New(HWND hWnd, Viewer& viewer)
 	return true;
 }
 
+bool Files::OpenFromPath(HWND hWnd, const std::wstring& path, Viewer& viewer)
+{
+	if (path.empty()) return false;
+	if (!ReadFromFile(hWnd, path, viewer)) return false;
+
+	currentFilePath = path;
+	isDirty = false;
+	UpdateWindowTitle(hWnd);
+
+	if (hWnd)
+	{
+		viewer.UpdateScrollBars(hWnd);
+		viewer.InvalidateCanvas(hWnd);
+	}
+	return true;
+}
+
 bool Files::Open(HWND hWnd, Viewer& viewer)
 {
 	if (!ConfirmDiscardChanges(hWnd, viewer))
@@ -194,18 +211,7 @@ bool Files::Open(HWND hWnd, Viewer& viewer)
 	ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
 
 	if (!GetOpenFileNameW(&ofn)) return false;
-	if (!ReadFromFile(hWnd, fileBuf, viewer)) return false;
-
-	currentFilePath = fileBuf;
-	isDirty = false;
-	UpdateWindowTitle(hWnd);
-
-	if (hWnd)
-	{
-		viewer.UpdateScrollBars(hWnd);
-		viewer.InvalidateCanvas(hWnd);
-	}
-	return true;
+	return OpenFromPath(hWnd, fileBuf, viewer);
 }
 
 bool Files::Save(HWND hWnd, const Viewer& viewer)

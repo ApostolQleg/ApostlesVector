@@ -255,6 +255,15 @@ void Editor::ApplyZOrderAction(HWND hWnd, UINT cmdId)
 		CommitHistory(hWnd, std::move(before));
 }
 
+void Editor::OpenFile(HWND hWnd, const std::wstring& filePath)
+{
+	if (files.OpenFromPath(hWnd, filePath, viewer))
+	{
+		history.Clear();
+		SyncToolbarStates();
+	}
+}
+
 void Editor::OnCreate(HWND hWnd)
 {
 	auto hInst = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hWnd, GWLP_HINSTANCE));

@@ -35,6 +35,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	if (!CreateMainWindow(hInstance, nCmdShow))
 		return FALSE;
 
+	int argc = 0;
+	if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc))
+	{
+		if (argc >= 2 && argv[1][0] != L'\0')
+			gEditor->OpenFile(gMainWnd, argv[1]);
+		LocalFree(argv);
+	}
+
 	HACCEL hAccelTable = LoadAcceleratorsW(hInstance, MAKEINTRESOURCEW(IDC_APOSTLESVECTOR));
 
 	MSG msg = {};

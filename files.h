@@ -22,6 +22,7 @@ public:
 
 	bool New(HWND hWnd, Viewer& viewer);
 	bool Open(HWND hWnd, Viewer& viewer);
+	bool OpenFromPath(HWND hWnd, const std::wstring& path, Viewer& viewer);
 	bool Save(HWND hWnd, const Viewer& viewer);
 	bool SaveAs(HWND hWnd, const Viewer& viewer);
 	bool ExportSvg(HWND hWnd, const Viewer& viewer) const;
